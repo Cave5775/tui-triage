@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "triage-board"
+version = "0.1.0"
+description = "Keyboard-driven terminal triage board per repository, shared between you and your coding agent."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["textual>=0.80"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+triage = "triage.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["triage*"]
+
+[tool.setuptools.package-data]
+triage = ["tui/*.tcss"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
