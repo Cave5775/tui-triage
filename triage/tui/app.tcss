@@ -98,8 +98,11 @@ Screen {
     text-style: bold;
 }
 
-Footer {
+#hints {
+    height: 1;
+    padding: 0 1;
     background: $panel;
+    color: $text-muted;
 }
 
 /* ---- modals --------------------------------------------------------------- */

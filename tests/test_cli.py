@@ -335,3 +335,95 @@ def test_body_stdin_is_utf8(run, monkeypatch):
     raw = io.TextIOWrapper(io.BytesIO("\ufeffrésumé ✓".encode("utf-8")), encoding="cp1252")
     monkeypatch.setattr(sys, "stdin", raw)
     assert jrun(run, "add", "t", "--body", "-")["body"] == "résumé ✓"
+
+
+# ---- config init / config keys / TRIAGE_CONFIG ----------------------------------------------
+
+def test_config_init_writes_the_default_file_under_triage_home(run, triage_home):
+    import tomllib
+
+    from triage.tui import keys
+
+    out = jrun(run, "config", "init")  # a new file: any actor (the agent by default) may create it
+    path = triage_home / "config.toml"
+    assert out == {"path": str(path), "overwritten": False}
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert set(data["keys"]) == {c.name for c in keys.COMMANDS}
+    assert data["agent"]["finish_status"] == "review" and data["ui"]["poll_seconds"] == 1.0
+    assert jrun(run, "config", "get", "agent.finish_status")["value"] == "review"
+
+
+def test_config_init_to_a_given_path_and_directory(run, tmp_path):
+    target = tmp_path / "nested" / "mine.toml"
+    code, out, _ = run("config", "init", str(target))
+    assert code == 0 and target.exists() and str(target) in out and "TRIAGE_CONFIG" in out
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    assert run("config", "init", str(folder))[0] == 0
+    assert (folder / "config.toml").exists()
+
+
+def test_config_init_refuses_to_overwrite_without_force(run, triage_home):
+    assert run("config", "init")[0] == 0
+    path = triage_home / "config.toml"
+    path.write_text(path.read_text(encoding="utf-8") + "# mine\n", encoding="utf-8")
+    code, _, err = run("--as", "user", "config", "init")
+    assert code == 1 and "already exists" in err and "--force" in err
+    assert path.read_text(encoding="utf-8").endswith("# mine\n")
+
+
+def test_config_init_force_requires_the_user(run, triage_home):
+    assert run("config", "init")[0] == 0
+    path = triage_home / "config.toml"
+    path.write_text("# mine\n", encoding="utf-8")
+    code, _, err = run("config", "init", "--force")  # the agent
+    assert code == 1 and "user" in err
+    assert path.read_text(encoding="utf-8") == "# mine\n"
+    code, _, _ = run("--as", "user", "config", "init", "--force")
+    assert code == 0 and "[keys]" in path.read_text(encoding="utf-8")
+
+
+def test_triage_config_env_var_redirects_the_config_file(run, tmp_path, monkeypatch, triage_home):
+    custom = tmp_path / "elsewhere" / "cfg.toml"
+    assert run("config", "init", str(custom))[0] == 0
+    monkeypatch.setenv("TRIAGE_CONFIG", str(custom))
+    assert run("--as", "user", "config", "set", "agent.finish_status", "done")[0] == 0
+    text = custom.read_text(encoding="utf-8")
+    assert 'finish_status = "done"' in text
+    assert "# Where `triage done` sends an item" in text  # comments survive
+    assert jrun(run, "config", "get", "agent.finish_status")["value"] == "done"
+    assert not (triage_home / "config.toml").exists()
+    custom.unlink()  # init with no path now targets TRIAGE_CONFIG
+    assert jrun(run, "config", "init")["path"] == str(custom)
+
+
+def test_config_keys_json_lists_every_command(run, triage_home):
+    from triage.tui import keys
+
+    data = jrun(run, "config", "keys")
+    assert data["problems"] == [] and data["path"] == str(triage_home / "config.toml")
+    rows = {r["command"]: r for r in data["keys"]}
+    assert set(rows) == {c.name for c in keys.COMMANDS}
+    assert rows["quit"]["keys"] == ["q"] and rows["quit"]["source"] == "default"
+    assert rows["help"]["keys"] == ["question_mark"] and rows["help"]["config"] == "?"
+    assert rows["toggle_detail"]["keys"] == ["tab", "shift+tab"]
+    assert rows["quit"]["description"]
+
+
+def test_config_keys_reports_overrides_and_problems(run, triage_home):
+    triage_home.mkdir(parents=True, exist_ok=True)
+    (triage_home / "config.toml").write_text(
+        '[keys]\nquit = "x"\nedit = "q"\nghost = "z"\nnote = ""\n', encoding="utf-8")
+    data = jrun(run, "config", "keys")
+    rows = {r["command"]: r for r in data["keys"]}
+    assert rows["quit"]["keys"] == ["x"] and rows["quit"]["source"] == "config"
+    assert rows["edit"]["keys"] == ["q"] and rows["edit"]["source"] == "config"  # q was freed by quit = "x"
+    assert rows["note"]["keys"] == ["c"] and rows["note"]["source"] == "default"
+    assert {p["command"] for p in data["problems"]} == {"ghost", "note"}
+    code, out, _ = run("config", "keys")
+    assert code == 0 and "problem:" in out and "quit" in out
+
+
+def test_config_keys_is_read_only_for_everyone(run):
+    assert run("config", "keys")[0] == 0  # the agent may read
+    assert run("config", "keys", "extra")[0] == 1

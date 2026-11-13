@@ -32,7 +32,7 @@ triage install-skill      # optional: teaches Claude Code how to use the board
 4. **Hand it to the agent.** In your agent session, say *"check the triage board"* or *"pick up the next task"*. The agent claims the item (it moves to **Doing**), works on it, and writes progress notes you can read in the right-hand pane.
 5. **Review.** When the agent finishes, the item appears under **Review** (tab `4`). Read its summary. Press `y` to accept it (→ Done), or `n` to send it back with a reason the agent will see next time.
 
-Press `?` at any time for the full list of keys.
+Press `?` at any time for the full list of keys. It starts with the keys that matter for what you're looking at, and the bar at the bottom of the screen shows the same thing.
 
 ## How work flows
 
@@ -54,18 +54,19 @@ Every item keeps an **activity log**: status changes, edits, your notes and the 
 
 ## Keyboard cheat sheet
 
-The design rules: frequent actions are single keys; holding Shift does the bigger version of the same action; vim keys and arrow keys both work; anything destructive needs a second key or a `y`. The bottom bar always shows the keys that apply right now.
+The design rules: frequent actions are single keys; holding Shift does the bigger version of the same action; vim keys and arrow keys both work; anything destructive needs a second key or a `y`. The bar at the bottom always shows the keys that apply right now (an item selected, an item in Review, the Archived tab, the detail pane, a filter), using your own key names if you've changed them.
 
 **Getting around**
 
 | | |
 |---|---|
 | `j` `k` / `↓` `↑` | move down / up |
-| `g` `G` | top / bottom (`Ctrl+D` / `Ctrl+U` for half a page) |
-| `h` `l` / `←` `→` / `Tab` | previous / next tab |
+| `g` `G` | top / bottom (`Ctrl+D` / `Ctrl+U` or `PgDn` / `PgUp` for half a page) |
+| `h` `l` / `←` `→` | previous / next tab |
+| `Tab` / `Shift+Tab` | switch between the item list and the detail pane, so you can scroll a long note without reaching for `Enter` and `Esc` |
 | `1` … `5` | Inbox, Todo, Doing, Review, Done (`0` = all, `9` = archived) |
 | `/` | filter by text (`Enter` keeps it, `Esc` clears it) |
-| `Enter` | read the selected item in the detail pane (`Esc` to come back) |
+| `Enter` | read the selected item in the detail pane (`Esc` or `Tab` to come back) |
 | `R` | switch to another repo's board |
 
 **Capturing**
@@ -92,6 +93,32 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `Y` | copy `triage show <id>` to paste into an agent chat |
 
 **App:** `,` settings · `?` help · `q` quit
+
+The item keys (`e`, `c`, `Space`, `m`, `p`, `y`, `n`, `u`, `d d`, ...) work the same while the detail pane has focus, and act on the selected item. In the detail pane `j`/`k` scroll instead of moving through the list.
+
+### Customising keys
+
+Every key above can be changed. The keys live in the `[keys]` table of `~/.triage/config.toml`, and the easiest way to start is to let triage write the whole file for you, defaults and comments included:
+
+```sh
+triage config init                 # writes ~/.triage/config.toml (refuses to overwrite an existing one)
+triage config init ./my.toml       # or write it somewhere else, then: TRIAGE_CONFIG=./my.toml triage
+triage config keys                 # show the keys in effect (add --json for scripts)
+```
+
+Each line is `command = "key1, key2"`. Keys are Textual key names (`ctrl+d`, `down`, `shift+tab`, `f5`, `question_mark`) or just the character (`?`, `/`, `+`, `-`, `=`, `space`; the comma key is written `comma`). For example:
+
+```toml
+[keys]
+quit = "q, ctrl+q"
+help = "?, f1"
+edit = "e, enter"
+toggle_detail = "tab, shift+tab"
+move = "m"                 # the first key of m-then-i/t/d/r/x; the second keys are fixed
+archive = "d"              # press it twice to archive
+```
+
+Only the commands you list change; everything else keeps its default. One key can't be bound to two commands. If something in `[keys]` is wrong (an unknown command, an empty value, a clash), triage ignores that entry, uses the default instead, and shows one warning when it starts, for example `keys: 2 problems in config.toml — default used for quit, edit (see triage config keys)`. It never refuses to start. Key changes apply the next time you open the TUI. A few keys do two jobs depending on where you are, and each is one entry: `advance` (`Space` moves an item forward, or restores it in Archived), `back` (`Esc` leaves the detail pane, or clears the filter), `accept` (`y`) and `purge` (`D`).
 
 ### Quick-add tokens
 
@@ -140,6 +167,7 @@ Press `,` in the app to change settings. `Space`/`Enter` toggles or cycles a val
 triage config                                        # show everything and where each value comes from
 triage config set agent.finish_status done --as user          # global
 triage config set agent.can_edit true --board --as user       # this repo only
+triage config init                                             # write a complete, commented config.toml to start from
 ```
 
 | setting | default | what it controls |
@@ -155,7 +183,7 @@ triage config set agent.can_edit true --board --as user       # this repo only
 | `ui.confirm_delete` | on | ask before permanently deleting |
 | `ui.poll_seconds` | `1.0` | how quickly the board shows the agent's changes |
 
-Settings are stored in `~/.triage/config.toml`. Only you can change them: the CLI refuses `config set` unless it is run with `--as user`, and the skill tells the agent never to try.
+Settings are stored in `~/.triage/config.toml` (or the file named by `TRIAGE_CONFIG`). Only you can change them: the CLI refuses `config set` unless it is run with `--as user`, and the skill tells the agent never to try. Changing a setting edits just that one line, so the comments and the `[keys]` table you wrote stay as they are.
 
 ## Where your data lives
 
@@ -166,7 +194,7 @@ Settings are stored in `~/.triage/config.toml`. Only you can change them: the CL
   boards/<repo>-<id>.json     one board per repository
 ```
 
-Board files are plain, readable JSON, which makes them easy to back up or inspect. To keep boards somewhere else, set `TRIAGE_HOME`.
+Board files are plain, readable JSON, which makes them easy to back up or inspect. To keep boards somewhere else, set `TRIAGE_HOME`. To use a config file from a different place (for example one made with `triage config init ./my.toml`), set `TRIAGE_CONFIG` to its path.
 The app and any number of agents can write at the same time: every change is locked and saved in one step, so nothing gets lost or corrupted.
 
 ## Troubleshooting
@@ -197,6 +225,8 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | `triage archive ID` / `triage delete ID --yes` | archive / delete permanently |
 | `triage repos` / `triage path` | known boards / this repo's board file |
 | `triage config [get KEY \| set KEY VALUE \| unset KEY] [--board]` | settings |
+| `triage config init [PATH] [--force]` | write a complete default `config.toml` (an existing file needs `--force --as user`) |
+| `triage config keys [--json]` | the keybindings in effect, and any problems with `[keys]` |
 | `triage install-skill [--force] [--dir PATH]` | install the Claude Code skill |
 
 The CLI acts as the **agent** by default. Add `--as user` (or set `TRIAGE_ACTOR=user`) to act as yourself.
@@ -209,4 +239,4 @@ pip install -e .[dev]
 python -m pytest -q        # about 120 tests, about 2 minutes (the TUI tests wait on live polling)
 ```
 
-The code is split into a small core that every change goes through (`triage/ops.py`, `store.py`, `config.py`, `model.py`, `paths.py`), plus two front ends: `triage/cli.py` and `triage/tui/`. `docs/CONTRACT.md` describes the core API. The TUI's keymap is defined once in `triage/tui/keys.py`, which drives both the bottom bar and the `?` help screen.
+The code is split into a small core that every change goes through (`triage/ops.py`, `store.py`, `config.py`, `model.py`, `paths.py`), plus two front ends: `triage/cli.py` and `triage/tui/`. `docs/CONTRACT.md` describes the core API. The TUI's keymap is defined once in `triage/tui/keys.py` (named commands with default keys, and the hint lists for each context). It drives the key bindings, the bottom bar, the `?` help screen and `triage config init|keys`, and the `[keys]` table in `config.toml` is overlaid on it at startup.

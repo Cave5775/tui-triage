@@ -8,11 +8,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Input, Label, OptionList, Static, TextArea
@@ -23,7 +24,7 @@ from ..model import PRIORITY_LABELS, PRIORITIES, TYPES, Item
 from ..paths import RepoNotFound, RepoRef, board_path, resolve_repo
 from ..store import list_boards, read_json
 from .fields import ChoiceField
-from .keys import help_sections
+from .keys import Keymap, default_keymap, help_sections
 
 # ---- prompt ------------------------------------------------------------------
 
@@ -83,28 +84,46 @@ class ConfirmScreen(ModalScreen[bool]):
 # ---- help --------------------------------------------------------------------
 
 
-def build_help() -> Table:
+def build_help(keymap: Keymap | None = None, hints: list[tuple[str, str]] | None = None) -> Group:
+    """The help body: the current context's keys first, then every group (effective keys)."""
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold", no_wrap=True, min_width=12)
     table.add_column()
-    for group, rows in help_sections():
+    for group, rows in help_sections(keymap or default_keymap()):
         table.add_row(Text(group.upper(), style="bold underline"), "")
         for key, text in rows:
             table.add_row(key, text)
         table.add_row("", "")
-    return table
+    parts: list = []
+    if hints:
+        line = Text(overflow="fold")
+        for n, (key, label) in enumerate(hints):
+            if n:
+                line.append("   ")
+            line.append(key, style="bold")
+            line.append(" " + label)
+        parts += [Text("Keys for what you're looking at", style="bold underline"), line, Text("")]
+    parts.append(table)
+    return Group(*parts)
 
 
 class HelpScreen(ModalScreen[None]):
-    BINDINGS = [
-        Binding("escape,question_mark,q", "close", "close", key_display="esc", show=True),
-        Binding("j,down", "scroll(1)", "scroll", show=True, key_display="j/k"),
-        Binding("k,up", "scroll(-1)", "scroll", show=False),
-    ]
+    BINDINGS = [Binding("escape", "close", "close", key_display="esc", show=True)]
+
+    def __init__(self, keymap: Keymap | None = None, hints: list[tuple[str, str]] | None = None) -> None:
+        super().__init__()
+        self._keymap = keymap or default_keymap()
+        self._hints = hints or []
+        km = self._keymap
+        # the keys that close or scroll follow the configured keymap (per instance, like the app's bindings)
+        extra = [Binding(k, "close", "close", show=False) for name in ("help", "quit") for k in km.keys_for(name)]
+        extra += [Binding(k, "scroll(1)", "scroll", show=False) for k in km.keys_for("cursor_down")]
+        extra += [Binding(k, "scroll(-1)", "scroll", show=False) for k in km.keys_for("cursor_up")]
+        self._bindings = BindingsMap.merge([self._bindings, BindingsMap(extra)])
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="help"):
-            yield Static(build_help(), id="help-body")
+            yield Static(build_help(self._keymap, self._hints), id="help-body")
         yield Footer()
 
     def on_mount(self) -> None:

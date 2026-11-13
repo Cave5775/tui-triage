@@ -18,10 +18,11 @@ from pathlib import Path
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult, SuspendNotSupported
+from textual.binding import BindingsMap
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.timer import Timer
-from textual.widgets import Footer, Input, OptionList, Static
+from textual.widgets import Input, OptionList, Static
 
 from .. import config, ops
 from ..model import FLOW, TYPES, Board, Item
@@ -35,6 +36,7 @@ from .widgets import (
     TAB_LABELS,
     DetailPane,
     ItemList,
+    KeyHints,
     palette,
     render_tabs,
     tab_statuses,
@@ -126,14 +128,17 @@ class TriageApp(App[None]):
     CSS_PATH = "app.tcss"
     TITLE = "triage"
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS = keys.bindings()
+    # No class-level BINDINGS: Textual collects those once per class, but the keys are configurable.
+    # The effective bindings are added per instance in __init__ (the App's own defaults stay).
 
     def get_driver_class(self):  # type: ignore[override]
         driver_class = super().get_driver_class()
         return driver_class if kitty_keyboard_wanted() else without_kitty_keyboard(driver_class)
 
-    def __init__(self, store: BoardStore | None = None) -> None:
+    def __init__(self, store: BoardStore | None = None, keymap: keys.Keymap | None = None) -> None:
         super().__init__()
+        self.keymap: keys.Keymap = keymap if keymap is not None else keys.load_keymap()
+        self._bindings = BindingsMap.merge([self._bindings, BindingsMap(keys.bindings(self.keymap))])
         self.store: BoardStore | None = None
         self._initial_store = store
         self._main_screen = None  # the default screen that holds the board UI (modals are pushed over it)
@@ -162,7 +167,7 @@ class TriageApp(App[None]):
                 yield ItemList(id="items")
             yield DetailPane(id="detail")
         yield Static(id="message")
-        yield Footer()
+        yield KeyHints(id="hints")
 
     def _q(self, selector: str, cls=None):
         """Query the board UI even while a modal screen is on top (``App.query`` only sees the top screen)."""
@@ -189,8 +194,11 @@ class TriageApp(App[None]):
             self._attach(self._initial_store)
         else:
             self.render_all()
-            self.say("no repository here — pick one (R) or type a path")
+            self.say(f"no repository here — pick one ({self.keymap.first('repos')}) or type a path")
             self.push_screen(RepoPickerScreen(), self._picked)
+        warning = self.keymap.warning()
+        if warning:
+            self.say(warning, error=True)
 
     def on_resize(self, event: events.Resize) -> None:
         self.call_after_refresh(self.render_all)
@@ -319,24 +327,34 @@ class TriageApp(App[None]):
         tabs.update(render_tabs(counts, self.tab, max(20, tabs.size.width or self.size.width), pal))
         items = self.visible_items()
         total = len(self.board.sorted_items(tab_statuses(self.tab))) if self.board else 0
-        empty = "no board open — press R" if self.board is None else (
-            "no matches" if self.filter_text else f"no {TAB_LABELS[self.tab].lower()} items" + (" — press a to add" if self.tab != "archived" else ""))
+        km = self.keymap
+        empty = f"no board open — press {km.first('repos')}" if self.board is None else (
+            "no matches" if self.filter_text else f"no {TAB_LABELS[self.tab].lower()} items"
+            + (f" — press {km.first('quick_add')} to add" if self.tab != "archived" else ""))
         self.items_view.set_items(items, pal, self.tab in ("all", "archived"), self._flash, select_id, empty, reset)
         title = TAB_LABELS[self.tab] + (f" · {len(items)}/{total}" if self.filter_text else f" · {total}")
         self._q("#left").border_title = title
         self.update_detail()
         self.refresh_bindings()
+        self.update_hints()
 
     def is_attached_ui(self) -> bool:
         return self._main_screen is not None
 
     def update_detail(self) -> None:
-        self.detail.show(self.current_item(), palette(self))
+        self.detail.show(self.current_item(), palette(self), self.keymap.first("edit"))
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id == "items":
             self.update_detail()
             self.refresh_bindings()
+            self.update_hints()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        self.update_hints()
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        self.update_hints()
 
     # ---- messages ---------------------------------------------------------
     def say(self, text: str, error: bool = False, sticky: bool = False) -> None:
@@ -352,11 +370,44 @@ class TriageApp(App[None]):
         if text and not sticky and not error:
             self._message_timer = self.set_timer(MESSAGE_SECONDS, lambda: self.say(""))
 
-    # ---- action state (footer context) -------------------------------------
+    # ---- key hints ---------------------------------------------------------
+    def hint_context(self) -> str:
+        """Which key-hint list applies: empty / item / review / archived / detail / filter."""
+        focused = self.focused
+        if focused is not None and focused is self.filter_input:
+            return "filter"
+        if focused is not None and focused is self.detail:
+            return "detail"
+        item = self.current_item()
+        if item is None:
+            return "empty"
+        if self.tab == "archived" or item.status == "archived":
+            return "archived"
+        return "review" if item.status == "review" else "item"
+
+    def hint_entries(self) -> list[tuple[str, str]]:
+        item = self.current_item()
+        dest = None
+        if item is not None and item.status in FLOW and item.status != FLOW[-1]:
+            dest = FLOW[FLOW.index(item.status) + 1]
+        return keys.hint_entries(
+            self.hint_context(), self.keymap, dest=dest, can_undo=bool(self.undo_stack),
+            filter_active=bool(self.filter_text.strip()),
+        )
+
+    def update_hints(self) -> None:
+        if not self.is_attached_ui():
+            return
+        try:
+            self._q("#hints", KeyHints).set_entries(self.hint_entries())
+        except Exception:  # never let the hint bar break a key press
+            pass
+
+    # ---- action state ------------------------------------------------------
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         main = not isinstance(self.screen, ModalScreen)
-        if action in ("tab_next", "tab_prev"):
-            return main  # these are priority bindings: keep them out of modals
+        if action == "toggle_detail":
+            return main  # a priority binding (tab): keep it out of modals, whose forms use tab
         if not main:
             return True
         if action == "advance":
@@ -385,14 +436,14 @@ class TriageApp(App[None]):
                 return
         await super().on_event(event)
 
-    def action_chord(self, prefix: str) -> None:
+    def action_chord(self, name: str) -> None:
         item = self._need_item()
         if item is None:
             return
-        chord = keys.CHORDS_BY_PREFIX[prefix]
-        deadline = time.monotonic() + CHORD_SECONDS if prefix == "d" else None
-        self._chord = (prefix, deadline)
-        self.say(keys.chord_prompt(chord), sticky=True)
+        chord = keys.CHORDS_BY_NAME[name]
+        deadline = time.monotonic() + CHORD_SECONDS if not chord.options else None  # a double press has a time limit
+        self._chord = (name, deadline)
+        self.say(keys.chord_prompt(chord, self.keymap), sticky=True)
         if deadline is not None:
             self.set_timer(CHORD_SECONDS, self._expire_chord)
 
@@ -403,7 +454,7 @@ class TriageApp(App[None]):
 
     def _chord_key(self, event: events.Key) -> bool:
         """Handle the second key of a pending chord. Returns True when the key was consumed."""
-        prefix, deadline = self._chord  # type: ignore[misc]
+        name, deadline = self._chord  # type: ignore[misc]
         self._chord = None
         self.say("")
         if event.key == "escape":
@@ -411,30 +462,33 @@ class TriageApp(App[None]):
             return True
         if deadline is not None and time.monotonic() > deadline:
             return False  # too late: treat as a normal key
-        valid = dict(keys.CHORDS_BY_PREFIX[prefix].options)
-        if event.key in valid:
-            self._run_chord(prefix, event.key)
+        chord = keys.CHORDS_BY_NAME[name]
+        if not chord.options:  # a double press: the same key again
+            if event.key in self.keymap.keys_for(name):
+                self._run_chord(name, event.key)
+                return True
+            return False  # the prefix then something else: just a normal key press
+        if event.key in dict(chord.options):
+            self._run_chord(name, event.key)
             return True
-        if prefix == "d":
-            return False  # `d` then something else: just a normal key press
         self.say("cancelled")
         return True
 
-    def _run_chord(self, prefix: str, key: str) -> None:
+    def _run_chord(self, name: str, key: str) -> None:
         item = self._need_item()
         if item is None:
             return
-        if prefix == "m":
+        if name == "move":
             self._op(ops.set_status, item.id, STATUS_KEYS[key], what=f"moved {item.ref} to {STATUS_KEYS[key]}")
-        elif prefix == "p":
+        elif name == "priority":
             self._op(ops.update, item.id, priority=int(key), what=f"{item.ref} priority P{key}")
-        elif prefix == "d":
+        elif name == "archive":
             self._archive_or_purge(item)
 
     # ---- operations -------------------------------------------------------
     def _need_item(self) -> Item | None:
         if self.store is None:
-            self.say("no board open — press R to pick a repo", error=True)
+            self.say(f"no board open — press {self.keymap.first('repos')} to pick a repo", error=True)
             return None
         item = self.current_item()
         if item is None:
@@ -444,7 +498,7 @@ class TriageApp(App[None]):
     def _op(self, fn, *args, what: str = "", undoable: bool = True, select: int | None = None, **kw) -> ops.Change | None:
         """Run one ``ops`` call as the user, then re-render from a fresh load."""
         if self.store is None:
-            self.say("no board open — press R to pick a repo", error=True)
+            self.say(f"no board open — press {self.keymap.first('repos')} to pick a repo", error=True)
             return None
         try:
             change = fn(self.store, *args, actor="user", **kw)
@@ -482,14 +536,14 @@ class TriageApp(App[None]):
 
     def action_accept_hint(self) -> None:
         if self._need_item():
-            self.say("y accepts items in Review — this one is not there", error=True)
+            self.say(f"{self.keymap.first('accept')} accepts items in Review — this one is not there", error=True)
 
     def action_bounce(self) -> None:
         item = self._need_item()
         if item is None:
             return
         if item.status not in ("review", "done"):
-            self.say("n bounces items from Review or Done back to Todo", error=True)
+            self.say(f"{self.keymap.first('bounce')} bounces items from Review or Done back to Todo", error=True)
             return
 
         def done(reason: str | None) -> None:
@@ -557,7 +611,8 @@ class TriageApp(App[None]):
 
     def action_purge_hint(self) -> None:
         if self._need_item():
-            self.say("D deletes permanently and only works in the Archived tab (9); use d d to archive", error=True)
+            self.say(f"{self.keymap.first('purge')} deletes permanently and only works in the Archived tab "
+                     f"({self.keymap.first('tab_archived')}); use {self.keymap.first('archive')} to archive", error=True)
 
     def _purge(self, item: Item) -> None:
         def go() -> None:
@@ -630,7 +685,7 @@ class TriageApp(App[None]):
 
     def action_quick_add(self) -> None:
         if self.store is None:
-            self.say("no board open — press R to pick a repo", error=True)
+            self.say(f"no board open — press {self.keymap.first('repos')} to pick a repo", error=True)
             return
 
         def save(parsed: dict) -> str | None:
@@ -640,7 +695,7 @@ class TriageApp(App[None]):
 
     def action_add_form(self) -> None:
         if self.store is None:
-            self.say("no board open — press R to pick a repo", error=True)
+            self.say(f"no board open — press {self.keymap.first('repos')} to pick a repo", error=True)
             return
 
         def save(v: dict) -> str | None:
@@ -786,6 +841,19 @@ class TriageApp(App[None]):
         self.items_view.focus()
         self.refresh_bindings()
 
+    def action_toggle_detail(self) -> None:
+        """tab / shift+tab: switch focus between the item list and the detail pane."""
+        if self.focused is self.filter_input:  # leave the filter box like enter does
+            if self.filter_text.strip():
+                self.items_view.focus()
+            else:
+                self.action_clear_filter()
+        elif self._detail_focused():
+            self.action_detail_back()
+        else:
+            self.action_focus_detail()
+        self.refresh_bindings()
+
     # ---- filter -----------------------------------------------------------
     def action_filter(self) -> None:
         inp = self.filter_input
@@ -816,7 +884,7 @@ class TriageApp(App[None]):
 
     # ---- screens ----------------------------------------------------------
     def action_help(self) -> None:
-        self.push_screen(HelpScreen())
+        self.push_screen(HelpScreen(self.keymap, self.hint_entries()))
 
     def action_settings(self) -> None:
         board_id = self.store.ref.board_id if self.store else None

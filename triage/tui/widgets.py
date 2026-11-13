@@ -14,6 +14,7 @@ from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from ..model import FLOW, PRIORITY_LABELS, Item
+from .keys import fit_hints
 
 # ---- tabs --------------------------------------------------------------------
 
@@ -250,7 +251,7 @@ class ItemList(OptionList, inherit_bindings=False):
 
 # ---- detail pane -------------------------------------------------------------
 
-def render_detail(item: Item, pal: dict[str, str]) -> RenderableType:
+def render_detail(item: Item, pal: dict[str, str], edit_key: str = "e") -> RenderableType:
     title = Text()
     title.append(f"{item.ref}  ", style=pal["text-muted"])
     title.append(item.title, style="bold")
@@ -273,7 +274,7 @@ def render_detail(item: Item, pal: dict[str, str]) -> RenderableType:
     if item.body.strip():
         body = Markdown(item.body)
     else:
-        body = Text("(no description — press e to add one)", style="dim italic")
+        body = Text(f"(no description — press {edit_key} to add one)", style="dim italic")
 
     log = Text()
     for n, e in enumerate(item.log):
@@ -308,9 +309,9 @@ class DetailPane(VerticalScroll, inherit_bindings=False):
     def compose(self):
         yield Static(id="detail-content")
 
-    def show(self, item: Item | None, pal: dict[str, str]) -> None:
+    def show(self, item: Item | None, pal: dict[str, str], edit_key: str = "e") -> None:
         content = self.query_one("#detail-content", Static)
-        key = None if item is None else (str(item.to_dict()), tuple(sorted(pal.items())))
+        key = None if item is None else (str(item.to_dict()), tuple(sorted(pal.items())), edit_key)
         if key == self._shown:
             return
         previous_id = self._shown_id
@@ -321,7 +322,46 @@ class DetailPane(VerticalScroll, inherit_bindings=False):
             self.scroll_home(animate=False)
             self.border_title = ""
             return
-        content.update(render_detail(item, pal))
+        content.update(render_detail(item, pal, edit_key))
         self.border_title = item.ref
         if previous_id != item.id:
             self.scroll_home(animate=False)
+
+
+# ---- key-hint bar --------------------------------------------------------------
+
+def render_hints(entries: list[tuple[str, str]], width: int, pal: dict[str, str]) -> tuple[Text, list[tuple[str, str]]]:
+    """``e edit  c note  ...`` fitted to ``width`` cells (``? help`` is never dropped).
+
+    Returns the styled text and the entries that were kept.
+    """
+    kept, sep = fit_hints(entries, max(1, width))
+    out = Text(no_wrap=True, overflow="ellipsis")
+    for n, (key, label) in enumerate(kept):
+        if n:
+            out.append(sep)
+        out.append(key, style=f"bold {pal['accent']}")
+        out.append(" " + label, style=pal["text-muted"])
+    return out, kept
+
+
+class KeyHints(Static):
+    """The context-aware key-hint bar at the bottom of the main screen."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.entries: list[tuple[str, str]] = []  # everything the context wants to show
+        self.shown: list[tuple[str, str]] = []  # what fits the current width
+        self.text = Text()  # what is drawn
+
+    def set_entries(self, entries: list[tuple[str, str]]) -> None:
+        self.entries = list(entries)
+        self._redraw()
+
+    def on_resize(self) -> None:
+        self._redraw()
+
+    def _redraw(self) -> None:
+        width = self.size.width or 200  # the content width: the CSS padding is already excluded
+        self.text, self.shown = render_hints(self.entries, width, palette(self.app))
+        self.update(self.text)
