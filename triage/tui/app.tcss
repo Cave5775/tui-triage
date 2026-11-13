@@ -256,3 +256,40 @@ HelpScreen, SettingsScreen, RepoPickerScreen, ItemFormScreen {
 #form-error {
     height: 1;
 }
+
+/* ---- add / edit form: choice fields, hint line, compact mode ---- */
+
+#form {
+    width: 90;
+    max-width: 100%;
+    padding: 0 1;
+}
+
+#form ChoiceField {
+    margin-top: 0;
+    background: $boost;
+    color: $text;
+}
+
+#form ChoiceField:hover {
+    background: $primary 30%;
+}
+
+#form ChoiceField:focus {
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+#form-hint {
+    height: auto;
+    color: $text-muted;
+}
+
+ItemFormScreen.-compact #form Label {
+    margin-top: 0;
+}
+
+ItemFormScreen.-compact #f-body {
+    height: 5;
+}

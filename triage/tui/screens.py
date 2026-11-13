@@ -10,17 +10,19 @@ from typing import Callable
 
 from rich.table import Table
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Input, Label, OptionList, Select, Static, TextArea
+from textual.widgets import DataTable, Footer, Input, Label, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from .. import config
 from ..model import PRIORITY_LABELS, PRIORITIES, TYPES, Item
 from ..paths import RepoNotFound, RepoRef, board_path, resolve_repo
 from ..store import list_boards, read_json
+from .fields import ChoiceField
 from .keys import help_sections
 
 # ---- prompt ------------------------------------------------------------------
@@ -121,12 +123,18 @@ class HelpScreen(ModalScreen[None]):
 
 
 class ItemFormScreen(ModalScreen[None]):
-    """Title, type, priority and body. ``ctrl+s`` saves, ``esc`` cancels, ``tab`` moves between fields."""
+    """Title, type, priority and body. ``ctrl+s`` saves, ``esc`` cancels, ``tab``/``enter`` move between fields.
+
+    Type and priority are :class:`ChoiceField` widgets: focus one and use ``←``/``→`` (or ``h``/``l``, ``space``) to
+    cycle, or type the first letter (type) or ``1``-``4`` (priority) to jump.
+    """
 
     BINDINGS = [
         Binding("ctrl+s", "save", "save", show=True),
         Binding("escape", "cancel", "cancel", key_display="esc", show=True),
     ]
+
+    HINT = "tab/enter next field · ←/→ change type & priority · ctrl+s save · esc cancel"
 
     def __init__(self, item: Item | None, save: Callable[[dict], str | None]) -> None:
         super().__init__()
@@ -140,28 +148,38 @@ class ItemFormScreen(ModalScreen[None]):
             yield Input(value=it.title if it else "", placeholder="what needs doing?", id="f-title")
             with Horizontal(id="form-row"):
                 with Vertical():
-                    yield Label("type")
-                    yield Select([(t, t) for t in TYPES], value=it.type if it else "feature", allow_blank=False, id="f-type")
+                    yield Label(_field_label("type", "←/→ to change"), id="f-type-label")
+                    yield ChoiceField([(t, t) for t in TYPES], it.type if it else "feature", id="f-type")
                 with Vertical():
-                    yield Label("priority")
-                    yield Select(
+                    yield Label(_field_label("priority", "←/→ or 1-4"), id="f-priority-label")
+                    yield ChoiceField(
                         [(f"P{p} {PRIORITY_LABELS[p]}", p) for p in PRIORITIES],
-                        value=it.priority if it else 3, allow_blank=False, id="f-priority",
+                        it.priority if it else 3,
+                        jump={p: str(p) for p in PRIORITIES},
+                        id="f-priority",
                     )
-            yield Label("body (markdown)")
+            yield Label("body (markdown)", id="f-body-label")
             yield TextArea(it.body if it else "", id="f-body", tab_behavior="focus")
             yield Static("", id="form-error")
+            yield Static(self.HINT, id="form-hint")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#form").border_title = f"Edit {it.ref}" if (it := self._item) else "New item"
         self.query_one("#f-title").focus()
+        self._fit(self.size.height)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._fit(event.size.height)
+
+    def _fit(self, height: int) -> None:
+        self.set_class(height < 30, "-compact")
 
     def values(self) -> dict:
         return {
             "title": self.query_one("#f-title", Input).value,
-            "type": self.query_one("#f-type", Select).value,
-            "priority": self.query_one("#f-priority", Select).value,
+            "type": self.query_one("#f-type", ChoiceField).value,
+            "priority": self.query_one("#f-priority", ChoiceField).value,
             "body": self.query_one("#f-body", TextArea).text,
         }
 
@@ -174,10 +192,18 @@ class ItemFormScreen(ModalScreen[None]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        self.query_one("#f-body").focus()
+        self.focus_next()
+
+    def on_choice_field_submitted(self, event: ChoiceField.Submitted) -> None:
+        event.stop()
+        self.focus_next()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+def _field_label(name: str, hint: str) -> Text:
+    return Text.assemble(name, "  ", (hint, "dim"))
 
 
 # ---- settings ----------------------------------------------------------------
