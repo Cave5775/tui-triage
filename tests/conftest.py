@@ -13,6 +13,7 @@ def triage_home(tmp_path, monkeypatch) -> Path:
     home = tmp_path / "triage-home"
     monkeypatch.setenv("TRIAGE_HOME", str(home))
     monkeypatch.delenv("TRIAGE_REPO", raising=False)
+    monkeypatch.delenv("TRIAGE_CONFIG", raising=False)
     return home
 
 

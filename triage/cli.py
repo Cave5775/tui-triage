@@ -301,6 +301,11 @@ def _config_init(args: argparse.Namespace, rest: list[str]) -> int:
 
     if len(rest) > 1:
         raise ValueError("usage: triage config init [PATH] [--force]")
+    if rest and args.actor != "user":
+        raise ops.PermissionDenied(
+            "choosing where to write a config file belongs to the user; agents may only create the "
+            "default one (a human can run `triage config init PATH --as user`)"
+        )
     target = cfgmod.init_target(rest[0] if rest else None)
     exists = target.exists()
     if exists and not args.force:
@@ -310,7 +315,8 @@ def _config_init(args: argparse.Namespace, rest: list[str]) -> int:
             "overwriting settings belongs to the user; agents may not "
             "(a human can run `triage config init --force --as user`)"
         )
-    path = cfgmod.init_config(target, keys.default_keys_toml(), force=args.force)
+    # only the user may overwrite: re-checked under the lock inside init_config
+    path = cfgmod.init_config(target, keys.default_keys_toml(), force=args.force and args.actor == "user")
     if args.json:
         _emit_json({"path": str(path), "overwritten": exists})
     else:

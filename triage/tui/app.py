@@ -378,6 +378,8 @@ class TriageApp(App[None]):
             return "filter"
         if focused is not None and focused is self.detail:
             return "detail"
+        if self.store is None:
+            return "noboard"
         item = self.current_item()
         if item is None:
             return "empty"
@@ -511,7 +513,7 @@ class TriageApp(App[None]):
         target = select if select is not None else (change.item.id if change.item else None)
         self.reload(select_id=target)
         if what:
-            self.say(what + (" — u to undo" if undoable and change.changed else ""))
+            self.say(what + (f" — {self.keymap.first('undo')} to undo" if undoable and change.changed else ""))
         return change
 
     def action_advance(self) -> None:
@@ -680,7 +682,7 @@ class TriageApp(App[None]):
         if change is None:
             return self.message or "could not add"
         where = "" if status == self.tab or self.tab == "all" else f" → {status}"
-        self.say(f"added {change.item.ref}{where} — u to undo")
+        self.say(f"added {change.item.ref}{where} — {self.keymap.first('undo')} to undo")
         return None
 
     def action_quick_add(self) -> None:
@@ -721,7 +723,7 @@ class TriageApp(App[None]):
             change = self._op(ops.update, item.id, **edits)
             if change is None:
                 return self.message or "could not save"
-            self.say(f"saved {item.ref}" + (" — u to undo" if change.changed else " (no changes)"))
+            self.say(f"saved {item.ref}" + (f" — {self.keymap.first('undo')} to undo" if change.changed else " (no changes)"))
             return None
 
         self.push_screen(ItemFormScreen(item, save))

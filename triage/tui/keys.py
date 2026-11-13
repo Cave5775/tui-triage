@@ -345,9 +345,13 @@ def load_keymap() -> Keymap:
     source = config.config_path().name
     try:
         table = config.keys_table()
-    except config.ConfigError:
+    except config.ConfigError as exc:
+        why = "is not valid TOML" if "invalid TOML" in str(exc) else "could not be read (is it saved as UTF-8?)"
         return Keymap({c.name: c.keys for c in COMMANDS},
-                      [Problem("keys", f"{source} is not valid TOML", whole_file=True)], frozenset(), source)
+                      [Problem("keys", f"{source} {why}", whole_file=True)], frozenset(), source)
+    except Exception:  # never let a broken config stop the TUI from starting
+        return Keymap({c.name: c.keys for c in COMMANDS},
+                      [Problem("keys", f"{source} could not be read", whole_file=True)], frozenset(), source)
     except OSError:
         table = None
     return build_keymap(table, source=source)
@@ -393,6 +397,7 @@ HINT_CONTEXTS: dict[str, tuple[Hint, ...]] = {
         _h("quick_add", "add"), _h("add_form", "add form"), _h(("tab_prev", "tab_next"), "tabs"),
         _h("filter", "find"), _h("help", "help"), _h("quit", "quit"),
     ),
+    "noboard": (_h("repos", "pick a repo"), _h("help", "help"), _h("quit", "quit")),
     "item": _ITEM_HINTS,
     "review": (_h("accept", "accept"), _h("bounce", "bounce")) + _ITEM_HINTS,
     "archived": (
@@ -423,7 +428,15 @@ def hint_entries(
             continue
         if h.needs == "dest" and not dest:
             continue
-        key = h.key or "/".join(keymap.first(c) for c in h.commands)
+        if h.key:
+            key = h.key
+        elif context == "filter":
+            usable = [k for c in h.commands for k in keymap.keys[c] if not is_printable(k)]
+            if not usable:
+                continue  # every key of this command would just type a character here
+            key = display_key(usable[0])
+        else:
+            key = "/".join(keymap.first(c) for c in h.commands)
         out.append((key, h.label.format(dest=dest or "")))
     return out
 

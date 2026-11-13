@@ -102,7 +102,7 @@ Every key above can be changed. The keys live in the `[keys]` table of `~/.triag
 
 ```sh
 triage config init                 # writes ~/.triage/config.toml (refuses to overwrite an existing one)
-triage config init ./my.toml       # or write it somewhere else, then: TRIAGE_CONFIG=./my.toml triage
+triage config init ./my.toml --as user   # or write it somewhere else, then: TRIAGE_CONFIG=./my.toml triage
 triage config keys                 # show the keys in effect (add --json for scripts)
 ```
 
@@ -112,7 +112,7 @@ Each line is `command = "key1, key2"`. Keys are Textual key names (`ctrl+d`, `do
 [keys]
 quit = "q, ctrl+q"
 help = "?, f1"
-edit = "e, enter"
+edit = "e, f2"
 toggle_detail = "tab, shift+tab"
 move = "m"                 # the first key of m-then-i/t/d/r/x; the second keys are fixed
 archive = "d"              # press it twice to archive

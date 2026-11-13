@@ -83,6 +83,10 @@ def load_raw() -> dict:
         return {}
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"{path} is not UTF-8 text (save it as UTF-8): {exc}") from exc
+    except IsADirectoryError as exc:
+        raise ConfigError(f"{path} is a directory, not a config file") from exc
 
 
 def keys_table() -> Any:

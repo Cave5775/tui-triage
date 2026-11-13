@@ -282,3 +282,28 @@ def test_a_generated_config_is_the_reference_for_the_effective_settings(triage_h
     config.set_value("agent.finish_status", "done")
     assert config.get_config()["agent.finish_status"] == "done"
     assert tomllib.loads(path.read_text(encoding="utf-8"))["keys"]["quit"] == "q"
+
+
+def test_filter_hint_never_advertises_a_printable_key():
+    km = keys.build_keymap({"back": "b, escape"})
+    entries = dict((label, key) for key, label in keys.hint_entries("filter", km))
+    assert entries["clear filter"] == "esc"
+    only_printable = keys.build_keymap({"back": "b"})
+    labels = [label for _, label in keys.hint_entries("filter", only_printable)]
+    assert "clear filter" not in labels
+
+
+def test_noboard_context_leads_with_repo_picker():
+    entries = keys.hint_entries("noboard", keys.default_keymap())
+    assert entries[0] == ("R", "pick a repo")
+
+
+def test_readme_custom_keys_example_is_valid():
+    import re
+    from pathlib import Path
+
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    block = re.search(r"```toml\n(\[keys\].*?)```", readme.read_text(encoding="utf-8"), re.S)
+    assert block, "README has a [keys] example"
+    table = tomllib.loads(block.group(1))["keys"]
+    assert not keys.build_keymap(table).problems

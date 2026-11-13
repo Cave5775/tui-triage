@@ -355,12 +355,25 @@ def test_config_init_writes_the_default_file_under_triage_home(run, triage_home)
 
 def test_config_init_to_a_given_path_and_directory(run, tmp_path):
     target = tmp_path / "nested" / "mine.toml"
-    code, out, _ = run("config", "init", str(target))
+    code, _, err = run("config", "init", str(target))  # agent: may not choose a path
+    assert code == 1 and "belongs to the user" in err and not target.exists()
+    code, out, _ = run("--as", "user", "config", "init", str(target))
     assert code == 0 and target.exists() and str(target) in out and "TRIAGE_CONFIG" in out
     folder = tmp_path / "folder"
     folder.mkdir()
-    assert run("config", "init", str(folder))[0] == 0
+    assert run("--as", "user", "config", "init", str(folder))[0] == 0
     assert (folder / "config.toml").exists()
+
+
+def test_non_utf8_config_does_not_crash(run, triage_home):
+    triage_home.mkdir(parents=True, exist_ok=True)
+    (triage_home / "config.toml").write_bytes("# caf\xe9\n[keys]\nquit = \"x\"\n".encode("cp1252"))
+    code, out, err = run("config", "keys")
+    assert code in (0, 1) and "Traceback" not in err
+    from triage.tui import keys
+
+    km = keys.load_keymap()
+    assert km.keys["quit"] == keys.default_keymap().keys["quit"] and km.warning()
 
 
 def test_config_init_refuses_to_overwrite_without_force(run, triage_home):
@@ -385,7 +398,7 @@ def test_config_init_force_requires_the_user(run, triage_home):
 
 def test_triage_config_env_var_redirects_the_config_file(run, tmp_path, monkeypatch, triage_home):
     custom = tmp_path / "elsewhere" / "cfg.toml"
-    assert run("config", "init", str(custom))[0] == 0
+    assert run("--as", "user", "config", "init", str(custom))[0] == 0
     monkeypatch.setenv("TRIAGE_CONFIG", str(custom))
     assert run("--as", "user", "config", "set", "agent.finish_status", "done")[0] == 0
     text = custom.read_text(encoding="utf-8")
