@@ -482,7 +482,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:  # argparse: 0 for --help, 2 for usage errors
-        return exc.code if isinstance(exc.code, int) else 2
+        code = exc.code if isinstance(exc.code, int) else 2
+        if code and "--json" in (argv if argv is not None else sys.argv[1:]):
+            _emit_json({"error": "usage error (details on stderr; see `triage --help`)", "type": "UsageError"})
+        return code
     if args.actor is None:
         args.actor = os.environ.get("TRIAGE_ACTOR") or "agent"
     func = getattr(args, "func", cmd_tui)

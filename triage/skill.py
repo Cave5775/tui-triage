@@ -21,9 +21,9 @@ It holds planned features, fixes and changes. Flow: Inbox -> Todo -> Doing -> Re
 
 ## The loop
 
-1. Find work: `triage next --json` (does not claim anything) or `triage list --status todo --json`.
+1. Find work: `triage next --json` (does not claim anything; prints `null` when there is nothing to do) or `triage list --status todo --json`. If the user named an item, use that one.
 2. Read the item first: `triage show ID`. The log matters: a `bounced: ...` note is the user's feedback on a previous attempt, so address it.
-3. Claim it: `triage claim ID` (or `triage claim` for the next item). The item moves to Doing.
+3. Claim it: `triage claim ID` (or `triage claim` for the next item). The item moves to Doing. If the claim is refused (already claimed, not in todo), pick another item or ask the user; do not force it.
 4. Do the work. Record progress and decisions as you go: `triage note ID "chose X because Y"`.
 5. Finish: `triage done ID --summary "what changed, which files, how you verified it"`.
    The item goes to the user's Review (unless they configured otherwise). Do not mark it Done yourself; the user accepts it.

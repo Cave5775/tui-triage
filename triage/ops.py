@@ -339,6 +339,12 @@ def finish(store: BoardStore, item_id: int, *, actor: str = "agent", summary: st
 
 def accept(store: BoardStore, item_id: int, *, actor: str = "user", note: str | None = None) -> Change:
     """Approve reviewed work: review -> done."""
+    _check_actor(actor)
+    if actor == "agent":
+        raise PermissionDenied(
+            "accepting reviewed work is the user's decision; agents may not accept items "
+            "(the user accepts it in the TUI with `y`)"
+        )
     item = get(store, item_id)
     if item.status != "review":
         raise InvalidOperation(f"#{item.id} is {item.status}, not in review")
@@ -355,8 +361,8 @@ def bounce(store: BoardStore, item_id: int, reason: str = "", *, actor: str = "u
             raise InvalidOperation(f"#{item.id} is {item.status}; only review/done items can be bounced")
         if actor == "agent":
             raise PermissionDenied(
-                "review decisions belong to the user; agents may not bounce items "
-                "(add a note instead, or claim it again once it is back in todo)"
+                "sending reviewed work back is the user's decision; agents may not bounce items "
+                f"(add a note to #{item.id} if you found a problem with it)"
             )
         before = _snapshot(item)
         _apply_status(item, "todo", actor)
