@@ -7,12 +7,22 @@ File layout (all keys optional; missing keys use DEFAULTS)::
 
     [boards."myrepo-1a2b3c4d".agent]
     finish_status = "done"
+
+    [keys]            # global only: TUI keybindings, command = "key1, key2"
+    quit = "q, ctrl+q"
+
+The file location is ``$TRIAGE_CONFIG`` when set, else ``<triage home>/config.toml``. ``triage config init``
+writes a complete, commented file; writes by :func:`set_value` edit only the one line they change, so
+comments and the ``[keys]`` table survive.
 """
 
 from __future__ import annotations
 
+import copy
+import re
 import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .model import FLOW
@@ -73,6 +83,11 @@ def load_raw() -> dict:
         return {}
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
+
+
+def keys_table() -> Any:
+    """The raw global ``[keys]`` table (``None`` when absent); validation lives in ``triage.tui.keys``."""
+    return load_raw().get("keys")
 
 
 def get_config(board_id: str | None = None) -> dict[str, Any]:
@@ -155,20 +170,27 @@ def set_value(key: str, value: Any, board_id: str | None = None) -> None:
     path = config_path()
     with file_lock(path):
         raw = load_raw()
-        node = raw
+        expected = copy.deepcopy(raw)
+        node = expected
         if board_id:
-            node = raw.setdefault("boards", {}).setdefault(board_id, {})
+            node = expected.setdefault("boards", {}).setdefault(board_id, {})
         *parents, leaf = key.split(".")
-        chain = [node]
         for p in parents:
             node = node.setdefault(p, {})
-            chain.append(node)
         if value is None:
             node.pop(leaf, None)
         else:
             node[leaf] = value
-        _prune(raw)
-        atomic_write_text(path, dumps_toml(raw))
+        _prune(expected)
+        table = (("boards", board_id) if board_id else ()) + tuple(parents)
+        try:
+            text = path.read_text(encoding="utf-8", newline="") if path.exists() else ""
+        except OSError:
+            text = ""
+        new = _edit_line(text, table, leaf, value)
+        if new is None or not _same_config(new, expected):
+            new = dumps_toml(expected)  # could not edit in place safely: rewrite (comments are lost)
+        atomic_write_text(path, new)
 
 
 def _prune(table: dict) -> bool:
@@ -177,6 +199,129 @@ def _prune(table: dict) -> bool:
         if isinstance(table[k], dict) and _prune(table[k]):
             del table[k]
     return not table
+
+
+# ---- line-level edit that keeps comments and unrelated tables ------------
+
+_HEADER = re.compile(r"^\s*\[(?!\[)(?P<name>[^\]]+)\]\s*(?:#.*)?$")
+_SEGMENT = re.compile(r"""\s*(?:"(?P<d>(?:[^"\\]|\\.)*)"|'(?P<s>[^']*)'|(?P<b>[A-Za-z0-9_-]+))\s*(?:\.|$)""")
+_ANY_KEY_LINE = re.compile(r"^\s*(?:[A-Za-z0-9_-]+|\"[^\"]*\"|'[^']*')\s*=")
+_SIMPLE_VALUE = re.compile(r"""^(?P<v>"(?:[^"\\]|\\.)*"|'[^']*'|\[[^\]]*\]|[^\s#]+)\s*(?P<c>#.*)?$""")
+
+
+def _split_dotted(name: str) -> tuple[str, ...] | None:
+    """``agent`` / ``boards."my.repo".agent`` -> parts, or None when it is not simple enough to trust."""
+    parts: list[str] = []
+    pos = 0
+    while pos < len(name):
+        m = _SEGMENT.match(name, pos)
+        if m is None or m.end() == pos:
+            return None
+        if m.group("d") is not None:
+            parts.append(m.group("d").replace('\\"', '"').replace("\\\\", "\\"))
+        else:
+            parts.append(m.group("s") if m.group("s") is not None else m.group("b"))
+        pos = m.end()
+    return tuple(parts)
+
+
+def _edit_line(text: str, table: tuple[str, ...], leaf: str, value: Any) -> str | None:
+    """Set (or, for ``value=None``, remove) ``leaf`` in ``[table]`` touching only that line.
+
+    Returns the new text, or None when the file has a shape this cannot edit safely.
+    """
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()  # the final newline; re-added below
+    headers = [(i, _split_dotted(m.group("name"))) for i, line in enumerate(lines) if (m := _HEADER.match(line))]
+    start = next((i for i, parts in headers if parts == table), None)
+    new_line = None if value is None else f"{_toml_key(leaf)} = {_toml_value(value)}"
+    if start is None:
+        if value is None:
+            return text
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines:
+            lines.append("")
+        lines += ["[" + ".".join(_toml_key(p) for p in table) + "]", new_line]  # type: ignore[list-item]
+        return nl.join(lines) + nl
+    end = next((i for i, _ in headers if i > start), len(lines))
+    key_re = re.compile(r"^\s*(?:%s|\"%s\"|'%s')\s*=\s*(?P<val>.*)$" % ((re.escape(leaf),) * 3))
+    found = None
+    for j in range(start + 1, end):
+        m = key_re.match(lines[j])
+        if m:
+            found = (j, m.group("val").strip())
+            break
+    if found is not None:
+        j, val = found
+        if val.startswith('"' * 3) or val.startswith("'" * 3) or (val.startswith("[") and "]" not in val):
+            return None  # a multi-line value: leave it to the full rewrite
+        if value is None:
+            del lines[j]
+        else:
+            sv = _SIMPLE_VALUE.match(val)
+            comment = f"  {sv.group('c')}" if sv and sv.group("c") else ""
+            lines[j] = new_line + comment  # type: ignore[operator]
+    elif value is not None:
+        last = max((j for j in range(start + 1, end) if _ANY_KEY_LINE.match(lines[j])), default=start)
+        lines.insert(last + 1, new_line)  # type: ignore[arg-type]
+    return nl.join(lines) + nl if lines else ""
+
+
+def _same_config(text: str, expected: dict) -> bool:
+    try:
+        parsed = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False
+    _prune(parsed)
+    return parsed == expected
+
+
+# ---- generated default config -----------------------------------------------
+
+def default_config_text(keys_section: str = "") -> str:
+    """A complete ``config.toml`` with every setting at its default and a comment for each.
+
+    ``keys_section`` is the ``[keys]`` table text (``triage.tui.keys.default_keys_toml()``).
+    """
+    lines = [
+        "# triage-board configuration (written by `triage config init`).",
+        "# Every setting is shown at its default; edit a value or delete a line to get the default back.",
+        "# `triage config set` and the TUI settings screen edit single lines and keep your comments.",
+        "# Per-board overrides go in tables like [boards.\"<board id>\".agent] (set with `triage config set --board KEY VALUE`).",
+    ]
+    section = ""
+    for s in SETTINGS:
+        head, _, leaf = s.key.partition(".")
+        if head != section:
+            section = head
+            lines += ["", f"[{section}]"]
+        note = s.help + (f" ({'any of' if s.kind is list else 'one of'}: {', '.join(s.choices)})" if s.choices else "")
+        lines.append(f"# {note}")
+        lines.append(f"{leaf} = {_toml_value(s.default)}")
+    if keys_section:
+        lines += ["", keys_section.rstrip("\n")]
+    return "\n".join(lines) + "\n"
+
+
+def init_config(path: str | Path | None = None, keys_section: str = "", force: bool = False) -> Path:
+    """Write the default config to ``path`` (default: :func:`config_path`) and return where it went.
+
+    A directory means ``<dir>/config.toml``. Refuses to overwrite an existing file unless ``force``.
+    """
+    target = init_target(path)
+    with file_lock(target):
+        if target.exists() and not force:
+            raise ConfigError(f"{target} already exists (use --force to overwrite it)")
+        atomic_write_text(target, default_config_text(keys_section))
+    return target
+
+
+def init_target(path: str | Path | None = None) -> Path:
+    target = Path(path).expanduser() if path else config_path()
+    return target / "config.toml" if target.is_dir() else target
 
 
 # ---- minimal TOML writer (stdlib has a reader only) ------------------------

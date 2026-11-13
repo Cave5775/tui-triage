@@ -296,12 +296,75 @@ def _config_entry(s: cfgmod.Setting, eff: dict, glob: dict, board: dict, board_i
     }
 
 
+def _config_init(args: argparse.Namespace, rest: list[str]) -> int:
+    from .tui import keys
+
+    if len(rest) > 1:
+        raise ValueError("usage: triage config init [PATH] [--force]")
+    target = cfgmod.init_target(rest[0] if rest else None)
+    exists = target.exists()
+    if exists and not args.force:
+        raise cfgmod.ConfigError(f"{target} already exists; pass --force to overwrite it (as the user: --as user)")
+    if exists and args.actor != "user":
+        raise ops.PermissionDenied(
+            "overwriting settings belongs to the user; agents may not "
+            "(a human can run `triage config init --force --as user`)"
+        )
+    path = cfgmod.init_config(target, keys.default_keys_toml(), force=args.force)
+    if args.json:
+        _emit_json({"path": str(path), "overwritten": exists})
+    else:
+        print(f"{'overwrote' if exists else 'wrote'} {path}")
+        if not exists and path != cfgmod.config_path():
+            print(f"to use it, set TRIAGE_CONFIG={path}")
+    return 0
+
+
+def _config_keys(args: argparse.Namespace) -> int:
+    from .tui import keys
+
+    km = keys.load_keymap()
+    rows = []
+    for c in keys.COMMANDS:
+        rows.append({
+            "command": c.name,
+            "keys": list(km.keys_for(c.name)),
+            "config": km.config_value(c.name),
+            "default": list(c.keys),
+            "source": "config" if c.name in km.user_set else "default",
+            "group": c.group,
+            "description": c.desc,
+        })
+    problems = [{"command": p.command, "message": p.message} for p in km.problems]
+    if args.json:
+        _emit_json({"path": str(cfgmod.config_path()), "keys": rows, "problems": problems})
+        return 0
+    w = max(len(r["command"]) for r in rows)
+    kw = max(len(r["config"]) for r in rows)
+    for r in rows:
+        mark = "*" if r["source"] == "config" else " "
+        print(f"{r['command']:<{w}}  {r['config']:<{kw}} {mark} {r['description']}")
+    print(f"\n(* = set in {cfgmod.config_path()})")
+    for p in problems:
+        print(f"problem: {p['message']}")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace) -> int:
     words = args.words
     action = words[0] if words else "get"
     rest = words[1:]
-    if action not in ("get", "set", "unset"):
-        raise ValueError(f"unknown config action {action!r}; use `config get [KEY]`, `config set KEY VALUE` or `config unset KEY`")
+    if action not in ("get", "set", "unset", "init", "keys"):
+        raise ValueError(
+            f"unknown config action {action!r}; use `config get [KEY]`, `config set KEY VALUE`, `config unset KEY`, "
+            "`config init [PATH] [--force]` or `config keys`"
+        )
+    if action == "init":
+        return _config_init(args, rest)
+    if action == "keys":
+        if rest:
+            raise ValueError("usage: triage config keys")
+        return _config_keys(args)
     if action == "get":
         if len(rest) > 1:
             raise ValueError("usage: triage config get [KEY]")
@@ -456,9 +519,12 @@ def build_parser() -> argparse.ArgumentParser:
     add("repos", cmd_repos, "list known boards")
     add("path", cmd_path, "print the board file path for the current repo")
 
-    sp = add("config", cmd_config, "show or change settings: config [get [KEY]] | set KEY VALUE | unset KEY")
-    sp.add_argument("words", nargs="*", metavar="get|set|unset [KEY] [VALUE]")
+    sp = add("config", cmd_config,
+             "show or change settings: config [get [KEY]] | set KEY VALUE | unset KEY | init [PATH] [--force] | keys")
+    sp.add_argument("words", nargs="*", metavar="get|set|unset|init|keys [KEY|PATH] [VALUE]")
     sp.add_argument("--board", action="store_true", help="target this repo's board instead of the global settings")
+    sp.add_argument("--force", action="store_true",
+                    help="init: overwrite an existing config file (requires --as user)")
 
     sp = add("install-skill", cmd_install_skill, "install the Claude Code skill (SKILL.md)")
     sp.add_argument("--force", action="store_true", help="overwrite a different existing SKILL.md")

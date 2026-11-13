@@ -10,6 +10,7 @@ import time
 
 import pytest
 from textual.screen import ModalScreen
+from textual.widgets import Footer
 
 from triage import config, ops
 from triage.paths import resolve_repo
@@ -18,6 +19,7 @@ from triage.tui import keys
 from triage.tui.app import TriageApp, edit_text_externally, resolve_editor
 from triage.tui.quickadd import parse_quick_add
 from triage.tui.screens import HelpScreen, RepoPickerScreen, SettingsScreen, fuzzy_score
+from triage.tui.widgets import KeyHints
 
 SIZE = (120, 40)
 
@@ -433,7 +435,7 @@ async def test_copy_handoff(store, monkeypatch):
 
 # ---- navigation, tabs, filter -----------------------------------------------------
 
-async def test_tab_switching_with_l_h_numbers_and_tab(store):
+async def test_tab_switching_with_l_h_arrows_and_numbers(store):
     seed(store, ("i", "inbox", 3), ("t", "todo", 3), ("d", "doing", 3))
     app = TriageApp(store)
     async with app.run_test(size=SIZE) as pilot:
@@ -447,9 +449,9 @@ async def test_tab_switching_with_l_h_numbers_and_tab(store):
         assert [app.board.get(i).title for i in ids(app)] == ["d"]
         await pilot.press("h", "h")
         assert app.tab == "inbox"
-        await pilot.press("tab")
+        await pilot.press("l")
         assert app.tab == "todo"
-        await pilot.press("shift+tab", "shift+tab")
+        await pilot.press("h", "h")
         assert app.tab == "archived"  # wraps; archived is the 7th tab
         await pilot.press("right", "right")  # archived -> inbox -> todo
         assert app.tab == "todo"
@@ -830,20 +832,10 @@ async def test_help_screen_lists_every_binding_group(store):
         assert not isinstance(app.screen, ModalScreen)
     sections = dict(keys.help_sections())
     assert list(sections) == ["Navigate", "Capture", "Triage", "App"]
-    flat = " ".join(f"{k} {t}" for rows in sections.values() for k, t in rows)
+    flat = " ".join(f"{k} {t}" for rows in sections.values() for k, t in rows).lower()
     for needle in ("quick add", "full add form", "undo", "settings", "repo picker", "accept", "bounce",
                    "m …", "p …", "d d", "inbox", "doing", "ctrl+d"):
         assert needle in flat, needle
-
-
-def test_footer_and_help_come_from_the_same_table():
-    from triage.tui.app import TriageApp as A
-
-    table_actions = {k.action for k in keys.KEYS}
-    bound = {b.action for b in A.BINDINGS}
-    assert bound == table_actions
-    for k in keys.KEYS:
-        assert hasattr(A, "action_" + k.action.split("(")[0]), k.action
 
 
 async def test_repo_picker_opens_another_board_and_resets_undo(store, tmp_path):
@@ -913,27 +905,6 @@ async def test_opening_a_board_records_it_in_the_registry(store):
         await settle(pilot)
     [row] = [b for b in list_boards() if b["board_id"] == store.ref.board_id]
     assert row.get("opened_at")
-
-
-async def test_footer_is_context_sensitive(store):
-    [a, b] = seed(store, ("in review", "review", 3), ("todo", "todo", 3))
-    app = TriageApp(store)
-    async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
-
-        def shown():
-            return {v.binding.action for v in app.screen.active_bindings.values() if v.binding.show and v.enabled}
-
-        assert "accept" not in shown() and "advance" in shown()
-        await pilot.press("4")
-        await settle(pilot)
-        assert "accept" in shown()
-        await pilot.press("9")
-        await settle(pilot)
-        assert "restore" in shown() and "advance" not in shown() and "purge" in shown()
-        await pilot.press("4", "enter")
-        await settle(pilot)
-        assert "detail_back" in shown()
 
 
 async def test_small_terminal_does_not_crash(store):
@@ -1023,3 +994,451 @@ def test_kitty_keyboard_platform_default(monkeypatch, platform, flag, wanted):
     assert tui_app.kitty_keyboard_wanted() is wanted
     driver_class = TriageApp().get_driver_class()
     assert driver_class.__name__.startswith("NoKitty") is (not wanted)
+
+
+# ---- tab toggles list <-> detail --------------------------------------------------------
+
+async def test_tab_and_shift_tab_toggle_between_list_and_detail(store):
+    seed(store, ("a", "inbox", 3), ("b", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.focused is app.items_view
+        await pilot.press("tab")
+        assert app.focused is app.detail
+        await pilot.press("tab")
+        assert app.focused is app.items_view
+        await pilot.press("shift+tab")
+        assert app.focused is app.detail
+        await pilot.press("shift+tab")
+        assert app.focused is app.items_view
+        assert app.tab == "inbox"  # tab no longer switches status tabs
+        await pilot.press("tab", "escape")  # enter/esc still work alongside
+        assert app.focused is app.items_view
+        await pilot.press("enter")
+        assert app.focused is app.detail
+
+
+async def test_tab_with_no_item_stays_on_the_list(store):
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("tab")
+        assert app.focused is app.items_view and app.tab == "inbox"
+
+
+async def test_tab_in_the_filter_box_returns_to_the_list_and_keeps_the_filter(store):
+    seed(store, ("apple", "inbox", 3), ("pear", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("slash", *typed("app"), "tab")
+        await settle(pilot)
+        assert app.focused is app.items_view and app.filter_text == "app" and len(ids(app)) == 1
+
+
+async def test_tab_inside_a_modal_is_not_hijacked(store):
+    [a] = seed(store, ("a", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("c", "tab")
+        await settle(pilot)
+        assert isinstance(app.screen, ModalScreen)
+        assert app._main_screen.focused is not app.detail and app.tab == "inbox"
+        await pilot.press("escape")
+
+
+async def test_item_actions_work_while_the_detail_pane_has_focus(store):
+    [a] = seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("0", "tab")  # All tab: the item stays visible whatever happens to it
+        await settle(pilot)
+        assert app.focused is app.detail
+
+        def item():
+            return store.load().get(a)
+
+        await pilot.press("space")
+        await settle(pilot)
+        assert item().status == "todo" and app.focused is app.detail
+        await pilot.press("m", "d")
+        await settle(pilot)
+        assert item().status == "doing"
+        await pilot.press("p", "1")
+        await settle(pilot)
+        assert item().priority == 1
+        await pilot.press("plus", "minus")  # already urgent: + does nothing; - lowers it to P2
+        await settle(pilot)
+        assert item().priority == 2
+        await pilot.press("t")
+        await settle(pilot)
+        assert item().type == "fix"
+        await pilot.press("u")
+        await settle(pilot)
+        assert item().type == "feature"
+        await pilot.press("backspace")
+        await settle(pilot)
+        assert item().status == "todo"
+        await pilot.press("d", "d")
+        await settle(pilot)
+        assert item().status == "archived" and app.focused is app.detail
+        await pilot.press("u")
+        await settle(pilot)
+        assert item().status == "todo" and app.focused is app.detail
+
+
+async def test_review_keys_work_from_the_detail_pane(store):
+    a, b = seed(store, ("accept me", "review", 3), ("bounce me", "review", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("4", "tab", "y")
+        await settle(pilot)
+        assert store.load().get(a).status == "done" and app.focused is app.detail
+        await pilot.press("n", *typed("needs tests"), "enter")
+        await settle(pilot)
+        item = store.load().get(b)
+        assert item.status == "todo" and any("needs tests" in e.text for e in item.log)
+        assert app.focused is app.detail
+
+
+async def test_edit_and_note_open_from_the_detail_pane(store):
+    [a] = seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("tab", "e")
+        await settle(pilot)
+        assert app.screen.query_one("#f-title").value == "task"
+        await pilot.press("escape")
+        await settle(pilot)
+        await pilot.press("c", *typed("from detail"), "enter")
+        await settle(pilot)
+        assert store.load().get(a).log[-1].text == "from detail"
+
+
+# ---- the key-hint bar -----------------------------------------------------------------------
+
+def hints(app) -> list[tuple[str, str]]:
+    return app.query_one(KeyHints).shown
+
+
+async def test_hint_bar_replaces_the_footer(store):
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert len(app.query(Footer)) == 0 and len(app.query(KeyHints)) == 1
+
+
+async def test_hint_bar_for_an_empty_list(store):
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert hints(app) == [("a", "add"), ("A", "add form"), ("h/l", "tabs"), ("/", "find"), ("?", "help"), ("q", "quit")]
+
+
+async def test_hint_bar_with_an_item_selected_shows_edit_and_the_space_destination(store):
+    seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        shown = hints(app)
+        assert shown == [("e", "edit"), ("c", "note"), ("space", "→ todo"), ("m", "move"), ("p", "priority"),
+                         ("tab", "detail"), ("dd", "archive"), ("?", "help")]  # no undo yet
+        await pilot.press("l")  # Todo tab is empty
+        await settle(pilot)
+        assert hints(app)[0][1] == "add"
+        await pilot.press("h", "m", "t")
+        await settle(pilot)
+        await pilot.press("l")
+        await settle(pilot)
+        assert ("space", "→ doing") in hints(app) and ("u", "undo") in hints(app)
+        await pilot.press("u")
+        await settle(pilot)
+        assert ("u", "undo") not in hints(app)
+
+
+async def test_hint_bar_for_a_review_item_leads_with_accept_and_bounce(store):
+    seed(store, ("waiting", "review", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("4")
+        await settle(pilot)
+        assert hints(app)[:3] == [("y", "accept"), ("n", "bounce"), ("e", "edit")]
+        assert ("space", "→ done") in hints(app)
+
+
+async def test_hint_bar_in_the_archived_tab(store):
+    [a] = seed(store, ("old", "todo", 3))
+    ops.archive(store, a, actor="user")
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("9")
+        await settle(pilot)
+        shown = hints(app)
+        assert shown[:2] == [("space", "restore"), ("D", "delete")]
+        assert ("j/k", "move") in shown and ("h/l", "tabs") in shown and ("?", "help") in shown
+        assert ("e", "edit") not in shown and ("dd", "archive") not in shown
+
+
+async def test_hint_bar_with_the_detail_pane_focused(store):
+    seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("tab")
+        await settle(pilot)
+        assert hints(app) == [("j/k", "scroll"), ("tab/esc", "back to list"), ("e", "edit"), ("c", "note"), ("?", "help")]
+        await pilot.press("escape")
+        await settle(pilot)
+        assert ("e", "edit") in hints(app) and ("j/k", "scroll") not in hints(app)
+
+
+async def test_hint_bar_with_a_filter(store):
+    seed(store, ("apple", "inbox", 3), ("pear", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("slash", "a")
+        await settle(pilot)
+        assert hints(app) == [("enter", "keep"), ("esc", "clear filter")]  # typing: ? and q are just letters here
+        await pilot.press("enter")
+        await settle(pilot)
+        assert hints(app)[0] == ("esc", "clear filter") and ("e", "edit") in hints(app)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert ("esc", "clear filter") not in hints(app)
+
+
+async def test_hint_bar_follows_the_selection(store):
+    seed(store, ("in review", "review", 3), ("in inbox", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("0")
+        await settle(pilot)
+        first = hints(app)
+        assert first[0] == ("y", "accept") or first[0] == ("e", "edit")
+        await pilot.press("j")
+        await settle(pilot)
+        second = hints(app)
+        assert first != second
+        assert {first[0], second[0]} == {("y", "accept"), ("e", "edit")}
+
+
+@pytest.mark.parametrize("size", [(80, 24), (60, 20), (40, 20)])
+async def test_hint_bar_fits_the_terminal_and_keeps_help(store, size):
+    [a] = seed(store, ("task", "review", 2))
+    app = TriageApp(store)
+    async with app.run_test(size=size) as pilot:
+        await settle(pilot)
+        await pilot.press("4", "plus")
+        await settle(pilot)
+        bar = app.query_one(KeyHints)
+        assert ("?", "help") in bar.shown
+        assert bar.text.cell_len <= size[0] - 2
+        assert bar.shown[0] == ("y", "accept")
+
+
+async def test_hint_bar_follows_remapped_keys(store, triage_home):
+    seed(store, ("task", "inbox", 3))
+    write_keys(triage_home, 'edit = "x"\nhelp = "F1"\narchive = "z"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        shown = dict(hints(app))
+        assert shown["x"] == "edit" and shown["f1"] == "help" and shown["zz"] == "archive"
+        assert "e" not in shown and "?" not in shown
+
+
+# ---- configurable keys in the running app -------------------------------------------------------
+
+def write_keys(triage_home, body: str) -> None:
+    triage_home.mkdir(parents=True, exist_ok=True)
+    (triage_home / "config.toml").write_text("[keys]\n" + body, encoding="utf-8")
+
+
+async def test_remapped_quit_key_works_and_the_old_one_does_not(store, triage_home, monkeypatch):
+    write_keys(triage_home, 'quit = "x"\n')
+    calls = []
+    monkeypatch.setattr(TriageApp, "action_quit", lambda self: calls.append("quit"))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("q")
+        await settle(pilot)
+        assert calls == []
+        await pilot.press("x")
+        await settle(pilot)
+        assert calls == ["quit"]
+
+
+async def test_remapped_chord_prefixes_and_item_keys(store, triage_home):
+    [a, b] = seed(store, ("one", "inbox", 3), ("two", "inbox", 3))
+    write_keys(triage_home, 'move = "M"\narchive = "z"\nnote = "N"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("m")  # the old prefix is gone
+        assert app._chord is None
+        await pilot.press("M")
+        assert app._chord is not None and "move to" in app.message
+        await pilot.press("t")
+        await settle(pilot)
+        assert store.load().get(a).status == "todo"
+        await pilot.press("z", "z")  # archive is now z z
+        await settle(pilot)
+        assert store.load().get(b).status == "archived"
+        await pilot.press("d", "d")  # the old archive prefix does nothing
+        await settle(pilot)
+        assert store.load().get(a).status == "todo"
+
+
+async def test_remapped_note_key_opens_the_note_prompt(store, triage_home):
+    seed(store, ("one", "inbox", 3))
+    write_keys(triage_home, 'note = "N"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("c")
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+        await pilot.press("N")
+        await settle(pilot)
+        assert isinstance(app.screen, ModalScreen)
+        await pilot.press("escape")
+
+
+async def test_remapped_toggle_key_and_printable_keys_do_not_steal_filter_typing(store, triage_home):
+    seed(store, ("zebra", "inbox", 3), ("apple", "inbox", 3))
+    write_keys(triage_home, 'toggle_detail = "tab, z"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("z")
+        assert app.focused is app.detail
+        await pilot.press("z")
+        assert app.focused is app.items_view
+        await pilot.press("slash", "z")  # typing z in the filter box must type, not toggle
+        await settle(pilot)
+        assert app.filter_input.value == "z" and app.focused is app.filter_input
+
+
+async def test_remapped_help_key_opens_and_closes_help(store, triage_home):
+    write_keys(triage_home, 'help = "F1"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("question_mark")
+        await settle(pilot)
+        assert not isinstance(app.screen, HelpScreen)
+        await pilot.press("f1")
+        await settle(pilot)
+        assert isinstance(app.screen, HelpScreen)
+        await pilot.press("f1")
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+
+
+async def test_bad_keys_config_shows_one_warning_and_falls_back(store, triage_home):
+    seed(store, ("task", "inbox", 3))
+    write_keys(triage_home, 'quit = ""\nedit = "blorp"\nghost = "x"\nnote = "e"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        shown = app._q("#message").content.plain
+        assert shown == app.message
+        assert shown == ("keys: 4 problems in config.toml — default used for quit, edit, note; "
+                         "ignored unknown ghost (see triage config keys)")
+        assert app._q("#message").has_class("-error")
+        await pilot.press("e")  # the default still works
+        await settle(pilot)
+        assert app.screen.query_one("#f-title").value == "task"
+        await pilot.press("escape")
+
+
+async def test_unreadable_config_does_not_crash_the_tui(store, triage_home):
+    triage_home.mkdir(parents=True, exist_ok=True)
+    (triage_home / "config.toml").write_text("[keys\nnot toml", encoding="utf-8")
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.message.startswith("keys:") and "not valid TOML" in app.message
+        await pilot.press("a")
+        await settle(pilot)
+        assert isinstance(app.screen, ModalScreen)
+
+
+async def test_good_config_shows_no_warning(store):
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.keymap.problems == [] and not app.message.startswith("keys:")
+
+
+def help_text(app) -> str:
+    from rich.console import Console
+
+    out = io.StringIO()
+    Console(file=out, width=100, force_terminal=False).print(app.screen.query_one("#help-body").content)
+    return out.getvalue()
+
+
+async def test_help_leads_with_the_keys_for_what_you_are_looking_at(store):
+    seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("question_mark")
+        await settle(pilot)
+        text = help_text(app)
+        assert text.lstrip().startswith("Keys for what you're looking at")
+        top = text[: text.index("NAVIGATE")]
+        assert "e edit" in top and "space → todo" in top and "tab detail" in top
+        for group in ("NAVIGATE", "CAPTURE", "TRIAGE", "APP"):
+            assert group in text
+        await pilot.press("escape")
+
+
+async def test_help_shows_the_effective_configured_keys(store, triage_home):
+    write_keys(triage_home, 'quit = "x"\nedit = "w"\nmove = "M"\n')
+    seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("question_mark")
+        await settle(pilot)
+        text = help_text(app)
+        assert "w edit" in text.split("NAVIGATE")[0]  # the context line
+        rows = {line.split("  ", 1)[0].strip(): line for line in text.splitlines() if line.strip()}
+        assert "x" in rows and "M …" in rows and "m …" not in rows
+        assert "Quit" in rows["x"] and "Edit the selected item" in rows["w"]
+        await pilot.press("escape")
+
+
+async def test_help_screen_does_not_lose_its_close_keys_when_quit_is_remapped(store, triage_home):
+    write_keys(triage_home, 'quit = "x"\n')
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("question_mark", "x")  # the configured quit key closes help, like q used to
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+
+
+def test_bindings_and_help_come_from_the_command_table():
+    app = TriageApp(None, keys.default_keymap())
+    bound = {(k, b.action) for k, bs in app._bindings.key_to_bindings.items() for b in bs}
+    for c in keys.COMMANDS:
+        for action in c.actions:
+            assert hasattr(TriageApp, "action_" + action.split("(")[0]), action
+            for k in c.keys:
+                assert (k, action) in bound, (c.name, k, action)
+    assert ("ctrl+q", "quit") in bound  # Textual's own defaults are still there
+    shown = {key for _, rows in keys.help_sections() for key, _ in rows}
+    assert {"tab/shift+tab", "1-5", "d d", "m …", "p …", "space", "?", "q"} <= shown

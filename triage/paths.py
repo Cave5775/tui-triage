@@ -33,7 +33,9 @@ def registry_path() -> Path:
 
 
 def config_path() -> Path:
-    return triage_home() / "config.toml"
+    """``$TRIAGE_CONFIG`` when set (so a generated config can live anywhere), else ``<triage home>/config.toml``."""
+    env = os.environ.get("TRIAGE_CONFIG")
+    return Path(env).expanduser() if env else triage_home() / "config.toml"
 
 
 def board_path(board_id: str) -> Path:
