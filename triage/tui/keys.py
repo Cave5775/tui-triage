@@ -69,7 +69,7 @@ COMMANDS: tuple[Command, ...] = (
     _c("filter", "slash", "Navigate", "Filter by title/body (enter keeps it, esc clears it)", "filter"),
     _c("focus_detail", "enter", "Navigate", "Focus the detail pane to scroll it", "focus_detail",
        contexts=("list",)),
-    _c("toggle_detail", "tab,shift+tab", "Navigate", "Switch focus between the item list and the detail pane",
+    _c("toggle_detail", "tab", "Navigate", "Switch focus between the item list and the detail pane",
        "toggle_detail", priority=True, contexts=CTX_ALL),
     _c("back", "escape", "Navigate", "Leave the detail pane, or clear the filter",
        ("detail_back", "clear_filter"), contexts=CTX_ALL),

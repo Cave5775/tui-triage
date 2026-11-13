@@ -998,7 +998,7 @@ def test_kitty_keyboard_platform_default(monkeypatch, platform, flag, wanted):
 
 # ---- tab toggles list <-> detail --------------------------------------------------------
 
-async def test_tab_and_shift_tab_toggle_between_list_and_detail(store):
+async def test_tab_toggles_between_list_and_detail(store):
     seed(store, ("a", "inbox", 3), ("b", "inbox", 3))
     app = TriageApp(store)
     async with app.run_test(size=SIZE) as pilot:
@@ -1008,9 +1008,7 @@ async def test_tab_and_shift_tab_toggle_between_list_and_detail(store):
         assert app.focused is app.detail
         await pilot.press("tab")
         assert app.focused is app.items_view
-        await pilot.press("shift+tab")
-        assert app.focused is app.detail
-        await pilot.press("shift+tab")
+        await pilot.press("shift+tab")  # not a toggle any more (triage #7 feedback)
         assert app.focused is app.items_view
         assert app.tab == "inbox"  # tab no longer switches status tabs
         await pilot.press("tab", "escape")  # enter/esc still work alongside
@@ -1441,4 +1439,4 @@ def test_bindings_and_help_come_from_the_command_table():
                 assert (k, action) in bound, (c.name, k, action)
     assert ("ctrl+q", "quit") in bound  # Textual's own defaults are still there
     shown = {key for _, rows in keys.help_sections() for key, _ in rows}
-    assert {"tab/shift+tab", "1-5", "d d", "m …", "p …", "space", "?", "q"} <= shown
+    assert {"tab", "1-5", "d d", "m …", "p …", "space", "?", "q"} <= shown

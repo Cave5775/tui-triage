@@ -419,7 +419,7 @@ def test_config_keys_json_lists_every_command(run, triage_home):
     assert set(rows) == {c.name for c in keys.COMMANDS}
     assert rows["quit"]["keys"] == ["q"] and rows["quit"]["source"] == "default"
     assert rows["help"]["keys"] == ["question_mark"] and rows["help"]["config"] == "?"
-    assert rows["toggle_detail"]["keys"] == ["tab", "shift+tab"]
+    assert rows["toggle_detail"]["keys"] == ["tab"]
     assert rows["quit"]["description"]
 
 

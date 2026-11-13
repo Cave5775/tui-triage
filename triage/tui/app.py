@@ -18,7 +18,7 @@ from pathlib import Path
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult, SuspendNotSupported
-from textual.binding import BindingsMap
+from textual.binding import Binding, BindingsMap
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.timer import Timer
@@ -138,7 +138,14 @@ class TriageApp(App[None]):
     def __init__(self, store: BoardStore | None = None, keymap: keys.Keymap | None = None) -> None:
         super().__init__()
         self.keymap: keys.Keymap = keymap if keymap is not None else keys.load_keymap()
-        self._bindings = BindingsMap.merge([self._bindings, BindingsMap(keys.bindings(self.keymap))])
+        extra = []
+        if not any("shift+tab" in ks for ks in self.keymap.keys.values()):
+            # Textual's screen default would make shift+tab a hidden second toggle; tab alone
+            # switches panes (triage #7), so swallow it on the main screen (modals keep it).
+            extra.append(Binding("shift+tab", "swallow_key", show=False, priority=True))
+        self._bindings = BindingsMap.merge(
+            [self._bindings, BindingsMap(keys.bindings(self.keymap)), BindingsMap(extra)]
+        )
         self.store: BoardStore | None = None
         self._initial_store = store
         self._main_screen = None  # the default screen that holds the board UI (modals are pushed over it)
@@ -408,8 +415,8 @@ class TriageApp(App[None]):
     # ---- action state ------------------------------------------------------
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         main = not isinstance(self.screen, ModalScreen)
-        if action == "toggle_detail":
-            return main  # a priority binding (tab): keep it out of modals, whose forms use tab
+        if action in ("toggle_detail", "swallow_key"):
+            return main  # priority bindings (tab, shift+tab): keep them out of modals, whose forms use them
         if not main:
             return True
         if action == "advance":
@@ -843,8 +850,11 @@ class TriageApp(App[None]):
         self.items_view.focus()
         self.refresh_bindings()
 
+    def action_swallow_key(self) -> None:
+        """Deliberately do nothing (used for shift+tab on the main screen)."""
+
     def action_toggle_detail(self) -> None:
-        """tab / shift+tab: switch focus between the item list and the detail pane."""
+        """tab: switch focus between the item list and the detail pane."""
         if self.focused is self.filter_input:  # leave the filter box like enter does
             if self.filter_text.strip():
                 self.items_view.focus()

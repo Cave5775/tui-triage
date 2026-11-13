@@ -87,7 +87,7 @@ def test_default_keymap_is_valid_and_conflict_free():
 
 
 def test_tab_toggles_the_detail_pane_by_default():
-    assert default_keymap().keys_for("toggle_detail") == ("tab", "shift+tab")
+    assert default_keymap().keys_for("toggle_detail") == ("tab",)
     assert "tab" not in default_keymap().keys_for("tab_next")
 
 
