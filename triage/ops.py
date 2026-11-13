@@ -383,7 +383,8 @@ def note(store: BoardStore, item_id: int, text: str, *, actor: str = "user") -> 
         return Change("note", before, _snapshot(item))
 
 
-def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user") -> Change:
+def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user",
+            _log_text: str | None = None) -> Change:
     """Move an item ``delta`` places within its status column (+ = down).
 
     Crossing into a neighbouring priority band adopts that band's priority, so the
@@ -409,6 +410,8 @@ def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user")
             item.priority = neighbour.priority
         for pos, it in enumerate(column):
             it.rank = float(pos + 1)
+        if _log_text:
+            _log(item, actor, "edit", _log_text)
         _touch(item, actor)
         return Change("reorder", before, _snapshot(item), {"delta": j - i})
 
@@ -443,7 +446,7 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
         delta = change.meta.get("delta", 0)
         if not delta:
             return change
-        return reorder(store, change.item.id, -delta, actor=actor)
+        return reorder(store, change.item.id, -delta, actor=actor, _log_text="undo: moved back")
     with store.transaction() as board:
         if change.before is None:  # undo add
             item = board.get(change.after.id)  # type: ignore[union-attr]
@@ -483,6 +486,25 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             return Change("revert", before, _snapshot(current))
         if "status" in restored and current.status in ("inbox", "todo"):
             current.claimed_by = None
-        _log(current, actor, "edit", f"undo {change.op}" + (f" (kept newer {', '.join(conflicts)})" if conflicts else ""))
+        text = "undo: " + ", ".join(_describe_undo(f, getattr(change.after, f), getattr(change.before, f))
+                                    for f in restored if f != "claimed_by" or restored == ["claimed_by"])
+        if conflicts:
+            text += f" (kept newer {', '.join(conflicts)})"
+        _log(current, actor, "edit", text)
         _touch(current, actor)
         return Change("revert", before, _snapshot(current))
+
+
+def _describe_undo(field: str, undone, restored) -> str:
+    """Human-readable piece of an undo log entry: what went back to what."""
+    if field == "status":
+        return f"status {undone} -> {restored}"
+    if field == "priority":
+        return f"priority P{undone} -> P{restored}"
+    if field == "type":
+        return f"type {undone} -> {restored}"
+    if field == "rank":
+        return "order restored"
+    if field == "claimed_by":
+        return f"claim {undone or 'none'} -> {restored or 'none'}"
+    return f"{field} restored"  # title, body

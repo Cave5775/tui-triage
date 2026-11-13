@@ -148,3 +148,20 @@ def test_undo_add_refused_after_agent_touched_it(store):
     with pytest.raises(InvalidOperation):
         ops.revert(store, added)
     assert store.load().get(added.after.id) is not None
+
+
+def test_every_undo_writes_a_descriptive_log_entry(store):
+    """triage #8: undo must show up in the item's activity log, saying what was reverted."""
+    a = ops.add(store, "a", status="todo").after
+    b = ops.add(store, "b", status="todo").after
+    cases = [
+        (lambda: ops.advance(store, a.id), "undo: status doing -> todo"),
+        (lambda: ops.update(store, a.id, priority=1, type="fix"), "undo: type fix -> feature, priority P1 -> P3"),
+        (lambda: ops.reorder(store, b.id, -1), "undo: moved back"),
+        (lambda: ops.archive(store, a.id), "undo: status archived -> todo"),
+    ]
+    for make, expected in cases:
+        change = make()
+        ops.revert(store, change)
+        last = store.load().get(change.item.id).log[-1]
+        assert (last.kind, last.by, last.text) == ("edit", "user", expected)
