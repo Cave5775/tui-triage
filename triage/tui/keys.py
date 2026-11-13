@@ -71,7 +71,7 @@ KEYS: tuple[KeyDef, ...] = (
     _k("escape", "clear_filter", "Navigate", "esc", "clear filter", "clear the filter", show=True, help_hidden=True),
     # ---- Capture --------------------------------------------------------
     _k("a", "quick_add", "Capture", "a", "add", "quick add: !1-!4 priority, #fix type, >todo status "
-       "(enter saves, alt+enter / ctrl+j saves and keeps open)", show=True),
+       "(enter saves, ctrl+j saves and keeps open)", show=True),
     _k("A", "add_form", "Capture", "A", "add form", "full add form (ctrl+s saves, esc cancels)"),
     _k("e", "edit_form", "Capture", "e", "edit", "edit the selected item in the form"),
     _k("E", "edit_external", "Capture", "E", "$EDITOR", "edit the body in $VISUAL / $EDITOR"),

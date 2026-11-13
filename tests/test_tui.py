@@ -991,3 +991,35 @@ def test_editor_not_found_raises_cleanly(monkeypatch):
     monkeypatch.setenv("VISUAL", "definitely-not-an-editor-xyz")
     with pytest.raises(FileNotFoundError):
         tui_app.edit_text_externally("hello", name="triage-test")
+
+
+def test_driver_never_requests_kitty_keyboard_when_disabled():
+    """Issue #3: under ConPTY the kitty request made Esc/Alt keys unusable."""
+    from triage.tui import app as tui_app
+
+    class FakeDriver:
+        def __init__(self):
+            self.out = []
+
+        def write(self, data):
+            self.out.append(data)
+
+    driver = tui_app.without_kitty_keyboard(FakeDriver)()
+    driver.write(tui_app.KITTY_KEYS_ON)
+    driver.write("\x1b[?1049h" + tui_app.KITTY_KEYS_ON + "\x1b[?2004h")
+    driver.write(tui_app.KITTY_KEYS_OFF)
+    assert driver.out == ["\x1b[?1049h\x1b[?2004h"]
+
+
+@pytest.mark.parametrize(
+    "platform, flag, wanted",
+    [("win32", "", False), ("linux", "", True), ("win32", "1", True), ("linux", "off", False)],
+)
+def test_kitty_keyboard_platform_default(monkeypatch, platform, flag, wanted):
+    from triage.tui import app as tui_app
+
+    monkeypatch.setattr(tui_app.sys, "platform", platform)
+    monkeypatch.setenv("TRIAGE_KITTY_KEYS", flag)
+    assert tui_app.kitty_keyboard_wanted() is wanted
+    driver_class = TriageApp().get_driver_class()
+    assert driver_class.__name__.startswith("NoKitty") is (not wanted)

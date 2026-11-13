@@ -57,7 +57,7 @@ class QuickAddScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "cancel", key_display="esc"),
-        Binding("ctrl+enter,alt+enter,ctrl+j", "save_keep", "save + next", key_display="alt+enter", show=True),
+        Binding("ctrl+enter,alt+enter,ctrl+j", "save_keep", "save + next", key_display="ctrl+j", show=True),
     ]
 
     def __init__(self, save: Callable[[dict], str | None], default_status: str) -> None:

@@ -27,7 +27,7 @@ triage install-skill      # optional: teaches Claude Code how to use the board
 ## Five-minute tour
 
 1. **Open a board.** `cd` into any git repo and run `triage`. Each repo gets its own board automatically. Outside a repo, `triage` opens a picker of the boards you've used.
-2. **Capture something.** Press `a`, type `Add dark mode !2 #feat`, and press `Enter`. It lands in **Inbox** with priority 2 and type *feature*. To capture several in a row, press `Alt+Enter` (or `Ctrl+J`) instead of `Enter` and the box stays open.
+2. **Capture something.** Press `a`, type `Add dark mode !2 #feat`, and press `Enter`. It lands in **Inbox** with priority 2 and type *feature*. To capture several in a row, press `Ctrl+J` instead of `Enter` and the box stays open.
 3. **Triage it.** Move through items with `j`/`k` (or the arrow keys). When an item is ready for work, press `Space` to promote it to **Todo**. Set its priority with `p` then `1`–`4`.
 4. **Hand it to the agent.** In your agent session, say *"check the triage board"* or *"pick up the next task"*. The agent claims the item (it moves to **Doing**), works on it, and writes progress notes you can read in the right-hand pane.
 5. **Review.** When the agent finishes, the item appears under **Review** (tab `4`). Read its summary. Press `y` to accept it (→ Done), or `n` to send it back with a reason the agent will see next time.
@@ -171,7 +171,8 @@ The app and any number of agents can write at the same time: every change is loc
 
 ## Troubleshooting
 
-- **`Alt+Enter` doesn't keep the quick-add box open.** Some terminals don't send it; use `Ctrl+J` instead.
+- **Esc, Alt or Shift keys do nothing, and you can't cancel or quit** (Windows, in modern terminals such as Windows Terminal, Alacritty or Terax). Fixed: triage no longer asks the terminal for the "kitty keyboard protocol", which Windows 10's console layer can't translate. If a future setup handles it, `TRIAGE_KITTY_KEYS=1` turns it back on.
+- **Save-and-keep-open in quick add is `Ctrl+J`.** Most terminals send `Alt+Enter` exactly like `Enter`, so it can't be relied on.
 - **`E` opens the wrong editor.** It uses `$VISUAL`, then `$EDITOR`, then Notepad on Windows (`vi` elsewhere). For VS Code, use `set VISUAL=code --wait`.
 - **"not inside a git repository".** Boards belong to git repos. Run `git init` first, or pick a board with `R`.
 - **The agent says it isn't allowed to do something.** That's the permission system working. Change the setting if you want to allow it.

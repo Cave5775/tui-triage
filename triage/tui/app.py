@@ -83,6 +83,43 @@ def copy_to_system_clipboard(text: str) -> None:
         subprocess.run(["clip"], input=text.encode("utf-8"), check=False, timeout=5, capture_output=True)
 
 
+# ---- terminal driver ---------------------------------------------------------
+
+KITTY_KEYS_ON = "\x1b[>1u"
+KITTY_KEYS_OFF = "\x1b[<u"
+
+
+def without_kitty_keyboard(driver_class: type) -> type:
+    """Wrap a Textual driver so it never asks the terminal for the kitty keyboard protocol.
+
+    On Windows, Textual writes ``ESC[>1u`` at startup. ConPTY passes it through to the
+    terminal (Windows Terminal, Alacritty, Terax, VS Code, ...); a terminal that honours it
+    then encodes Esc, Alt- and Shift-modified keys as CSI-u sequences, which the Windows 10
+    ConPTY input layer cannot translate back into key events. Result: Esc / Alt keys are
+    dead and you cannot cancel or quit. Without the request, terminals keep sending
+    classic keys, which work everywhere.
+    """
+
+    class NoKittyKeyboardDriver(driver_class):  # type: ignore[misc, valid-type]
+        def write(self, data: str) -> None:
+            data = data.replace(KITTY_KEYS_ON, "").replace(KITTY_KEYS_OFF, "")
+            if data:
+                super().write(data)
+
+    NoKittyKeyboardDriver.__name__ = f"NoKitty{driver_class.__name__}"
+    return NoKittyKeyboardDriver
+
+
+def kitty_keyboard_wanted() -> bool:
+    """Off on Windows unless TRIAGE_KITTY_KEYS=1; elsewhere Textual's default (on)."""
+    flag = os.environ.get("TRIAGE_KITTY_KEYS", "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    if flag in ("0", "false", "no", "off"):
+        return False
+    return sys.platform != "win32"
+
+
 # ---- app ---------------------------------------------------------------------
 
 class TriageApp(App[None]):
@@ -90,6 +127,10 @@ class TriageApp(App[None]):
     TITLE = "triage"
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = keys.bindings()
+
+    def get_driver_class(self):  # type: ignore[override]
+        driver_class = super().get_driver_class()
+        return driver_class if kitty_keyboard_wanted() else without_kitty_keyboard(driver_class)
 
     def __init__(self, store: BoardStore | None = None) -> None:
         super().__init__()
