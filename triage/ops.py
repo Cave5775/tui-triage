@@ -118,6 +118,14 @@ def _agent_status_rule(cfg: dict, item: Item, target: str) -> None:
         raise PermissionDenied("agent may not archive or unarchive items (agent.can_archive = false)")
     if target in ("review", "done") and cfg["agent.require_claim"] and not item.claimed_by:
         raise PermissionDenied(f"claim #{item.id} first (agent.require_claim = true)")
+    if target == "doing" and item.status != "doing":
+        raise PermissionDenied(f"use `triage claim {item.id}` to start work; it checks the pickup rules")
+    if target in ("inbox", "todo"):
+        releasing = item.status == "doing" and item.claimed_by
+        if item.status in ("review", "done") and item.created_by != "agent" and not cfg["agent.can_edit"]:
+            raise PermissionDenied(f"#{item.id} is {item.status}; reopening reviewed work is the user's call")
+        if not releasing:
+            _agent_edit_rule(cfg, item)
 
 
 def _agent_edit_rule(cfg: dict, item: Item) -> None:
@@ -298,6 +306,8 @@ def release(store: BoardStore, item_id: int, *, actor: str = "agent", note: str 
     _check_actor(actor)
     with store.transaction() as board:
         item = _require(board, item_id)
+        if actor == "agent" and item.status != "doing":
+            raise InvalidOperation(f"#{item.id} is {item.status}, not claimed; nothing to release")
         before = _snapshot(item)
         item.claimed_by = None
         _apply_status(item, "todo", actor)

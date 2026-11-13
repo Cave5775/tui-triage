@@ -239,11 +239,11 @@ def test_config_list_and_board_scope(run):
     assert by_key["agent.finish_status"]["source"] == "default"
     assert by_key["agent.finish_status"]["help"]
 
-    code, out, _ = run("config", "set", "agent.finish_status", "done")
+    code, out, _ = run("--as", "user", "config", "set", "agent.finish_status", "done")
     assert code == 0 and "global" in out
     assert jrun(run, "config", "get", "agent.finish_status")["source"] == "global"
 
-    code, out, _ = run("config", "set", "agent.can_edit", "true", "--board")
+    code, out, _ = run("--as", "user", "config", "set", "agent.can_edit", "true", "--board")
     assert code == 0 and "board" in out
     entry = jrun(run, "config", "get", "agent.can_edit", "--board")
     assert entry["value"] is True and entry["source"] == "board"
@@ -253,22 +253,22 @@ def test_config_list_and_board_scope(run):
     jrun(run, "--as", "user", "add", "user made")
     assert jrun(run, "set", "1", "--title", "edited by agent")["title"] == "edited by agent"
 
-    jrun(run, "config", "unset", "agent.can_edit", "--board")
+    jrun(run, "--as", "user", "config", "unset", "agent.can_edit", "--board")
     assert jrun(run, "config", "get", "agent.can_edit")["source"] == "default"
 
 
 def test_config_errors(run):
-    code, _, err = run("config", "set", "agent.nope", "1")
+    code, _, err = run("--as", "user", "config", "set", "agent.nope", "1")
     assert code == 1 and "unknown setting" in err
-    code, _, err = run("config", "set", "agent.finish_status", "bogus")
+    code, _, err = run("--as", "user", "config", "set", "agent.finish_status", "bogus")
     assert code == 1 and "review, done" in err
     assert run("config", "get", "agent.nope")[0] == 1
     assert run("config", "frobnicate")[0] == 1
-    assert run("config", "set", "agent.can_edit")[0] == 1
+    assert run("--as", "user", "config", "set", "agent.can_edit")[0] == 1
 
 
 def test_done_goes_to_done_when_configured(run):
-    run("config", "set", "agent.finish_status", "done", "--board")
+    run("--as", "user", "config", "set", "agent.finish_status", "done", "--board")
     jrun(run, "add", "x", "--status", "todo")
     jrun(run, "claim", "1")
     assert jrun(run, "done", "1")["status"] == "done"
@@ -318,3 +318,20 @@ def test_no_command_launches_tui(monkeypatch, repo):
     assert main([]) == 0
     assert main(["tui", "--repo", str(repo)]) == 0
     assert calls == [None, str(repo)]
+
+
+def test_agent_cannot_change_config(run):
+    code, _, err = run("config", "set", "agent.can_archive", "true")
+    assert code == 1 and "settings belong to the user" in err
+    code, _, err = run("config", "unset", "agent.can_archive")
+    assert code == 1
+    assert jrun(run, "config", "get", "agent.can_archive")["value"] is False
+
+
+def test_body_stdin_is_utf8(run, monkeypatch):
+    import io
+    import sys
+
+    raw = io.TextIOWrapper(io.BytesIO("\ufeffrésumé ✓".encode("utf-8")), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdin", raw)
+    assert jrun(run, "add", "t", "--body", "-")["body"] == "résumé ✓"

@@ -108,3 +108,21 @@ def test_revert_keeps_log_and_undoes_add_and_purge(store):
     assert store.load().get(added.after.id) is None
     with pytest.raises(NotFound):
         ops.get(store, 999)
+
+
+def test_agent_set_status_cannot_skip_claim_or_reopen(store):
+    inbox = ops.add(store, "inbox item").after
+    with pytest.raises(PermissionDenied):
+        ops.set_status(store, inbox.id, "doing", actor="agent")  # must claim
+    with pytest.raises(PermissionDenied):
+        ops.set_status(store, inbox.id, "todo", actor="agent")  # user's item, can_edit=false
+    done = ops.add(store, "done item", status="done").after
+    with pytest.raises(PermissionDenied):
+        ops.set_status(store, done.id, "todo", actor="agent")
+    with pytest.raises(InvalidOperation):
+        ops.release(store, done.id, actor="agent")
+    todo = ops.add(store, "todo item", status="todo").after
+    ops.claim(store, todo.id, actor="agent")
+    assert ops.set_status(store, todo.id, "todo", actor="agent").after.status == "todo"  # releasing own claim
+    own = ops.add(store, "agent idea", actor="agent").after
+    assert ops.set_status(store, own.id, "todo", actor="agent").after.status == "todo"

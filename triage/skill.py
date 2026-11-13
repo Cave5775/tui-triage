@@ -21,7 +21,7 @@ It holds planned features, fixes and changes. Flow: Inbox -> Todo -> Doing -> Re
 
 ## The loop
 
-1. Find work: `triage list --json` or `triage next --json` (does not claim anything).
+1. Find work: `triage next --json` (does not claim anything) or `triage list --status todo --json`.
 2. Read the item first: `triage show ID`. The log matters: a `bounced: ...` note is the user's feedback on a previous attempt, so address it.
 3. Claim it: `triage claim ID` (or `triage claim` for the next item). The item moves to Doing.
 4. Do the work. Record progress and decisions as you go: `triage note ID "chose X because Y"`.
@@ -36,15 +36,15 @@ It holds planned features, fixes and changes. Flow: Inbox -> Todo -> Doing -> Re
 
 ## Permissions
 
-The CLI enforces the user's settings. If it returns a permission error (cannot edit, archive, mark done, create...), respect it: do not work around it by other commands or by editing files. Add a note, or tell the user what you would have changed.
+The CLI enforces the user's settings. If it returns a permission error (cannot edit, archive, mark done, create...), respect it: do not work around it by other commands, by `--as user`, or by editing files. Settings belong to the user; never try to change them. Add a note, or tell the user what you would have changed.
 
 ## Quick reference
 
 ```
 triage list [--status todo,doing] [--all]   triage show ID        triage next
-triage claim [ID] [--force]                 triage release ID     triage note ID TEXT...
+triage claim [ID]                           triage release ID     triage note ID TEXT...
 triage done ID --summary TEXT               triage add TITLE... [--type T --priority N --body TEXT]
-triage config get [KEY]                     triage path           (prints the board file path)
+triage config get [KEY]
 ```
 
 Use item numbers without `#` in shell commands (`#` starts a comment in many shells).

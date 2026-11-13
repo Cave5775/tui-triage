@@ -19,7 +19,7 @@ from .model import ACTORS, FLOW, PRIORITY_LABELS, STATUSES, Item, normalize_stat
 from .paths import RepoNotFound, resolve_repo
 from .store import LockTimeout
 
-EXPECTED_ERRORS = (ops.TriageError, ValueError, RepoNotFound, LockTimeout)
+EXPECTED_ERRORS = (ops.TriageError, ValueError, RepoNotFound, LockTimeout, OSError)
 
 
 # ---- output helpers ---------------------------------------------------------
@@ -95,17 +95,25 @@ def _item_id(text: str) -> int:
         raise argparse.ArgumentTypeError(f"invalid item id {text!r} (expected a number such as 12)") from None
 
 
+def _read_stdin() -> str:
+    """Read stdin as UTF-8 regardless of the Windows console/pipe code page."""
+    buf = getattr(sys.stdin, "buffer", None)
+    if buf is not None:
+        return buf.read().decode("utf-8-sig", errors="replace")
+    return sys.stdin.read()
+
+
 def _read_body(args: argparse.Namespace) -> str | None:
     if getattr(args, "body_file", None):
         if args.body_file == "-":
-            return sys.stdin.read()
+            return _read_stdin()
         try:
-            return Path(args.body_file).read_text(encoding="utf-8")
+            return Path(args.body_file).read_text(encoding="utf-8-sig")
         except OSError as exc:
             raise ValueError(f"cannot read --body-file {args.body_file}: {exc}") from None
     body = getattr(args, "body", None)
     if body == "-":
-        return sys.stdin.read()
+        return _read_stdin()
     return body
 
 
@@ -313,6 +321,11 @@ def cmd_config(args: argparse.Namespace) -> int:
             for e in entries:
                 print(f"{e['key']:<{w}}  {_fmt_value(e['value']):<{vw}}  ({e['source']})  {e['help']}")
         return 0
+    if args.actor != "user":
+        raise ops.PermissionDenied(
+            "settings belong to the user; agents may not change them "
+            "(a human can run `triage config set ... --as user` or use the TUI settings screen)"
+        )
     board_id = _config_scope(args, need_board=True)
     if action == "set":
         if len(rest) < 2:

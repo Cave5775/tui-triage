@@ -31,12 +31,12 @@ The agent loop: `triage list` or `triage next` -> `triage claim ID` -> work -> `
 | `release ID [--note T]` | give up a claim (-> Todo) |
 | `note ID TEXT...` | append a note |
 | `done ID [--summary T]` | finish (-> Review or Done, per settings) |
-| `accept ID [--note T]`, `bounce ID REASON...` | review decisions (use `--as user`) |
+| `accept ID [--note T]`, `bounce ID REASON...` | review decisions (user only: `--as user`; agents are refused) |
 | `add TITLE... [--type T] [--priority N] [--status S] [--body T / --body-file PATH / --body -]` | add an item |
 | `set ID [--title] [--type] [--priority] [--status] [--body ...]` | edit an item |
 | `archive ID`, `delete ID --yes` | soft delete, permanent delete |
 | `repos`, `path` | known boards, this repo's board file |
-| `config [get [KEY]]`, `config set KEY VALUE`, `config unset KEY` | settings (`--board` targets this repo's board, otherwise global; `get` shows the effective value and its source) |
+| `config [get [KEY]]`, `config set KEY VALUE`, `config unset KEY` | settings; `set`/`unset` are user only (`--as user`) (`--board` targets this repo's board, otherwise global; `get` shows the effective value and its source) |
 | `install-skill [--force] [--dir PATH]` | install the Claude skill |
 
 Global options work before or after the command: `--repo PATH` (else `$TRIAGE_REPO`, else the current directory), `--as agent|user` (default `agent`, or `$TRIAGE_ACTOR`) and `--json` (exactly one JSON document on stdout; errors are `{"error": ..., "type": ...}`).
