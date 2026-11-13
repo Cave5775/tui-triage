@@ -17,7 +17,30 @@ You capture ideas into **Inbox** and promote the ones that are ready to **Todo**
 _(written in the TUI phase)_
 
 ## Agent interface
-_(written in the CLI phase)_
+Coding agents use the `triage` CLI from inside a normal session in the repo (worktrees share the board). Run `triage install-skill` once to install the Claude Code skill (`~/.claude/skills/triage/SKILL.md`; use `--dir PATH` to choose another place, `--force` to overwrite an edited copy).
+
+The agent loop: `triage list` or `triage next` -> `triage claim ID` -> work -> `triage note ID "..."` -> `triage done ID --summary "..."` (the item lands in Review unless `agent.finish_status` is `done`). A `bounced: ...` note in an item's log is your feedback on a previous attempt.
+
+| command | what it does |
+|---|---|
+| `triage` / `triage tui` | open the board |
+| `list [--status todo,doing] [--all]` | items grouped by status in flow order (`--all` adds archived) |
+| `show ID` | one item with its body and full log |
+| `next` | the item an agent should pick up (does not claim it) |
+| `claim [ID] [--force] [--name NAME]` | start work (-> Doing); no ID claims the next item |
+| `release ID [--note T]` | give up a claim (-> Todo) |
+| `note ID TEXT...` | append a note |
+| `done ID [--summary T]` | finish (-> Review or Done, per settings) |
+| `accept ID [--note T]`, `bounce ID REASON...` | review decisions (use `--as user`) |
+| `add TITLE... [--type T] [--priority N] [--status S] [--body T / --body-file PATH / --body -]` | add an item |
+| `set ID [--title] [--type] [--priority] [--status] [--body ...]` | edit an item |
+| `archive ID`, `delete ID --yes` | soft delete, permanent delete |
+| `repos`, `path` | known boards, this repo's board file |
+| `config [get [KEY]]`, `config set KEY VALUE`, `config unset KEY` | settings (`--board` targets this repo's board, otherwise global; `get` shows the effective value and its source) |
+| `install-skill [--force] [--dir PATH]` | install the Claude skill |
+
+Global options work before or after the command: `--repo PATH` (else `$TRIAGE_REPO`, else the current directory), `--as agent|user` (default `agent`, or `$TRIAGE_ACTOR`) and `--json` (exactly one JSON document on stdout; errors are `{"error": ..., "type": ...}`).
+Exit codes: 0 success, 1 error (message on stderr: `triage: error: ...`), 2 usage error. Agent actions are limited by the settings below, for example an agent cannot edit your items or mark work Done by default.
 
 ## Settings
 `~/.triage/config.toml`. Each setting can be set globally or per board. Edit it from the TUI (`,`) or with `triage config`.
