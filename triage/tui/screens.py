@@ -458,7 +458,7 @@ class RepoPickerScreen(ModalScreen["RepoRef | None"]):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        text = event.value.strip()
+        text = event.value.strip().strip('"').strip("'")
         if text and Path(text).expanduser().is_dir():
             self._open_path(text)
             return

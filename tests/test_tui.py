@@ -983,3 +983,11 @@ def test_run_resolves_given_repo(repo, monkeypatch):
     monkeypatch.setattr(app_mod, "TriageApp", Fake)
     app_mod.run(str(repo))
     assert seen["store"].ref.name == "scratch-repo"
+
+
+def test_editor_not_found_raises_cleanly(monkeypatch):
+    from triage.tui import app as tui_app
+
+    monkeypatch.setenv("VISUAL", "definitely-not-an-editor-xyz")
+    with pytest.raises(FileNotFoundError):
+        tui_app.edit_text_externally("hello", name="triage-test")

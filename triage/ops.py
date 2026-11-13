@@ -443,6 +443,10 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             item = board.get(change.after.id)  # type: ignore[union-attr]
             if item is None:
                 raise NotFound(f"#{change.after.id} no longer exists")  # type: ignore[union-attr]
+            if any(e.by != actor for e in item.log) or item.updated_by != actor:
+                raise InvalidOperation(
+                    f"{item.ref} has been worked on by someone else since it was added; archive it instead"
+                )
             board.items.remove(item)
             return Change("revert", _snapshot(item), None)
         current = board.get(change.before.id)
@@ -452,9 +456,27 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             board.items.append(restored)
             board.next_id = max(board.next_id, restored.id + 1)
             return Change("revert", None, _snapshot(restored))
+        # Three-way, per field: only restore what this change altered AND nobody has
+        # changed since, so concurrent edits (e.g. an agent claiming the item) survive.
         before = _snapshot(current)
+        restored, conflicts = [], []
         for f in _RESTORED_FIELDS:
-            setattr(current, f, getattr(change.before, f))
-        _log(current, actor, "edit", f"undo {change.op}")
+            old, new = getattr(change.before, f), getattr(change.after, f)
+            if old == new:
+                continue
+            if getattr(current, f) == new:
+                setattr(current, f, old)
+                restored.append(f)
+            else:
+                conflicts.append(f)
+        if not restored:
+            if conflicts:
+                raise InvalidOperation(
+                    f"{current.ref} was changed since ({', '.join(conflicts)}); nothing to undo safely"
+                )
+            return Change("revert", before, _snapshot(current))
+        if "status" in restored and current.status in ("inbox", "todo"):
+            current.claimed_by = None
+        _log(current, actor, "edit", f"undo {change.op}" + (f" (kept newer {', '.join(conflicts)})" if conflicts else ""))
         _touch(current, actor)
         return Change("revert", before, _snapshot(current))

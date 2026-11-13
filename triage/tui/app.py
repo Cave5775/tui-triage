@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -61,11 +62,17 @@ def resolve_editor() -> list[str]:
 
 def edit_text_externally(text: str, name: str = "triage-edit", run=subprocess.run) -> str:
     """Round-trip ``text`` through the user's editor using a temp file outside any repo."""
-    path = Path(tempfile.gettempdir()) / f"{name}-{os.getpid()}.md"
-    path.write_text(text, encoding="utf-8", newline="\n")
+    fd, tmp = tempfile.mkstemp(prefix=f"{name}-", suffix=".md")
+    path = Path(tmp)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
     try:
-        run([*resolve_editor(), str(path)], check=False)
-        return path.read_text(encoding="utf-8").replace("\r\n", "\n")
+        argv = resolve_editor()
+        exe = shutil.which(argv[0])
+        if exe is None:
+            raise FileNotFoundError(f"editor not found: {argv[0]} (set $VISUAL or $EDITOR)")
+        run([exe, *argv[1:], str(path)], check=False)
+        return path.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
     finally:
         path.unlink(missing_ok=True)
 
@@ -206,7 +213,7 @@ class TriageApp(App[None]):
         token = self.store.stat_token()
         try:
             board = self.store.load()
-        except (OSError, ValueError) as exc:  # a half-written file, a locked file...
+        except Exception as exc:  # half-written, locked or malformed file: never crash the poll timer
             self.say(f"could not read the board: {exc}", error=True)
             return
         old, self.board = self.board, board
@@ -530,13 +537,18 @@ class TriageApp(App[None]):
         if not self.undo_stack:
             self.say("nothing to undo")
             return
-        change = self.undo_stack.pop()
+        change = self.undo_stack[-1]
         try:
             result = ops.revert(self.store, change, actor="user")
+        except (LockTimeout, OSError) as exc:  # transient: keep the entry so u can retry
+            self.say(f"cannot undo right now: {exc}", error=True)
+            return
         except OP_ERRORS as exc:
+            self.undo_stack.pop()
             self.say(f"cannot undo: {exc}", error=True)
             self.reload()
             return
+        self.undo_stack.pop()
         item = change.item
         self.reload(select_id=item.id if result.after is not None else None)
         self.say(f"undid: {change.op} {item.ref}")
@@ -546,15 +558,18 @@ class TriageApp(App[None]):
         if item is None:
             return
         text = f"triage show {item.id}"
+        ok = False
         try:
             self.copy_to_clipboard(text)
+            ok = True
         except Exception:
             pass
         try:
             copy_to_system_clipboard(text)
+            ok = True
         except (OSError, subprocess.SubprocessError):
             pass
-        self.say(f"copied: {text}")
+        self.say(f"copied: {text}" if ok else f"could not copy; run: {text}", error=not ok)
 
     # ---- capture ----------------------------------------------------------
     def new_item_status(self) -> str:
@@ -602,7 +617,12 @@ class TriageApp(App[None]):
         def save(v: dict) -> str | None:
             if not v["title"].strip():
                 return "title must not be empty"
-            change = self._op(ops.update, item.id, title=v["title"], body=v["body"], type=v["type"], priority=v["priority"])
+            orig = {"title": item.title, "body": item.body, "type": item.type, "priority": item.priority}
+            edits = {k: v[k] for k in orig if v[k] != orig[k]}
+            if not edits:
+                self.say(f"{item.ref}: no changes")
+                return None
+            change = self._op(ops.update, item.id, **edits)
             if change is None:
                 return self.message or "could not save"
             self.say(f"saved {item.ref}" + (" — u to undo" if change.changed else " (no changes)"))
@@ -614,19 +634,34 @@ class TriageApp(App[None]):
         item = self._need_item()
         if item is None:
             return
+        failure: Exception | None = None
+        new = item.body
         try:
             with self.suspend():
-                new = edit_text_externally(item.body, name=f"triage-{item.id}")
+                try:
+                    new = edit_text_externally(item.body, name=f"triage-{item.id}")
+                except (OSError, subprocess.SubprocessError) as exc:
+                    failure = exc
         except SuspendNotSupported:
             self.say("cannot open an external editor in this terminal", error=True)
             return
-        except (OSError, subprocess.SubprocessError) as exc:
-            self.say(f"editor failed: {exc}", error=True)
+        if failure is not None:
+            self.say(f"editor failed: {failure}", error=True)
             self.reload()
             return
         if new.rstrip() == item.body.rstrip():
             self.say("body unchanged")
             self.reload()
+            return
+        try:
+            current = ops.get(self.store, item.id)
+        except OP_ERRORS as exc:
+            self.say(str(exc), error=True)
+            self.reload()
+            return
+        if current.body != item.body:
+            self.say(f"{item.ref} body was changed by {current.updated_by} while you edited; not saved", error=True)
+            self.reload(select_id=item.id)
             return
         self._op(ops.update, item.id, body=new, what=f"updated body of {item.ref}")
 

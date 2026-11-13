@@ -126,3 +126,25 @@ def test_agent_set_status_cannot_skip_claim_or_reopen(store):
     assert ops.set_status(store, todo.id, "todo", actor="agent").after.status == "todo"  # releasing own claim
     own = ops.add(store, "agent idea", actor="agent").after
     assert ops.set_status(store, own.id, "todo", actor="agent").after.status == "todo"
+
+
+def test_revert_does_not_clobber_concurrent_agent_changes(store):
+    item = ops.add(store, "x", status="todo").after
+    bump = ops.update(store, item.id, priority=1)  # user change
+    ops.claim(store, item.id, actor="agent")  # agent works on it meanwhile
+    r = ops.revert(store, bump).after
+    assert r.priority == 3  # user's own change undone
+    assert (r.status, r.claimed_by) == ("doing", "agent")  # agent's claim survives
+
+    moved = ops.set_status(store, item.id, "review", actor="user")
+    ops.set_status(store, item.id, "done", actor="user")  # changed again since
+    with pytest.raises(InvalidOperation):
+        ops.revert(store, moved)
+
+
+def test_undo_add_refused_after_agent_touched_it(store):
+    added = ops.add(store, "x", status="todo")
+    ops.note(store, added.after.id, "on it", actor="agent")
+    with pytest.raises(InvalidOperation):
+        ops.revert(store, added)
+    assert store.load().get(added.after.id) is not None
