@@ -64,6 +64,8 @@ def test_bounce_logs_reason(store):
     item = ops.add(store, "x", status="todo").after
     ops.claim(store, item.id, actor="agent")
     ops.finish(store, item.id, actor="agent")
+    with pytest.raises(PermissionDenied):
+        ops.bounce(store, item.id, "self-bounce", actor="agent")
     b = ops.bounce(store, item.id, "tests fail")
     assert b.after.status == "todo" and b.after.claimed_by is None
     assert b.after.log[-1].text == "bounced: tests fail"

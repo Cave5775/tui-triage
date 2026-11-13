@@ -75,7 +75,7 @@ Front ends should catch `(TriageError, ValueError)`.
 | `release(store, id, *, actor="agent", note=None)` | → todo, claim cleared |
 | `finish(store, id, *, actor="agent", summary="")` | agent → `agent.finish_status`; user → done |
 | `accept(store, id, *, actor="user", note=None)` | review → done |
-| `bounce(store, id, reason="", *, actor="user")` | review/done → todo, logs "bounced: reason" |
+| `bounce(store, id, reason="", *, actor="user")` | review/done → todo, logs "bounced: reason"; user only (agents get PermissionDenied) |
 | `note(store, id, text, *, actor)` | always allowed |
 | `reorder(store, id, delta, *, actor)` | moves within the status column; adopts the neighbour's priority when crossing a band; meta has the delta |
 | `archive(store, id, *, actor)` | → archived (soft delete) |

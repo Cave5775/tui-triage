@@ -344,7 +344,10 @@ def bounce(store: BoardStore, item_id: int, reason: str = "", *, actor: str = "u
         if item.status not in ("review", "done"):
             raise InvalidOperation(f"#{item.id} is {item.status}; only review/done items can be bounced")
         if actor == "agent":
-            _agent_status_rule(cfg, item, "todo")
+            raise PermissionDenied(
+                "review decisions belong to the user; agents may not bounce items "
+                "(add a note instead, or claim it again once it is back in todo)"
+            )
         before = _snapshot(item)
         _apply_status(item, "todo", actor)
         if reason:
