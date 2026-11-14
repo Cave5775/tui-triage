@@ -90,7 +90,7 @@ Front ends should catch `(TriageError, ValueError)`.
 | `reorder(store, id, delta, *, actor)` | moves within the status column; adopts the neighbour's priority when crossing a band; meta has the delta |
 | `archive(store, id, *, actor)` | → archived (soft delete) |
 | `purge(store, id, *, actor)` | permanent delete |
-| `revert(store, change, *, actor)` | undo as a new transaction; keeps the log |
+| `revert(store, change, *, actor)` | undo as a new transaction; removes the undone change's log entries and logs nothing itself (entries written meanwhile stay) |
 
 ### Keybindings (`triage.tui.keys`)
 A `[keys]` table in the global `config.toml` maps a command name to `"key1, key2"` (or a TOML list of strings).

@@ -383,8 +383,7 @@ def note(store: BoardStore, item_id: int, text: str, *, actor: str = "user") -> 
         return Change("note", before, _snapshot(item))
 
 
-def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user",
-            _log_text: str | None = None) -> Change:
+def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user") -> Change:
     """Move an item ``delta`` places within its status column (+ = down).
 
     Crossing into a neighbouring priority band adopts that band's priority, so the
@@ -397,23 +396,28 @@ def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user",
         if actor == "agent":
             _agent_edit_rule(cfg, item)
         before = _snapshot(item)
-        column = board.sorted_items(item.status)
-        i = column.index(item)
-        j = max(0, min(len(column) - 1, i + int(delta)))
-        if i == j:
-            return Change("reorder", before, _snapshot(item), {"delta": 0})
-        neighbour = column[j]
-        column.pop(i)
-        column.insert(j, item)
-        if neighbour.priority != item.priority:
+        moved = _move_in_column(board, item, delta, actor, log=True)
+        return Change("reorder", before, _snapshot(item), {"delta": moved})
+
+
+def _move_in_column(board: Board, item: Item, delta: int, actor: str, *, log: bool) -> int:
+    """Shared body of :func:`reorder` and its undo; returns the distance actually moved."""
+    column = board.sorted_items(item.status)
+    i = column.index(item)
+    j = max(0, min(len(column) - 1, i + int(delta)))
+    if i == j:
+        return 0
+    neighbour = column[j]
+    column.pop(i)
+    column.insert(j, item)
+    if neighbour.priority != item.priority:
+        if log:
             _log(item, actor, "edit", f"priority P{item.priority} -> P{neighbour.priority}")
-            item.priority = neighbour.priority
-        for pos, it in enumerate(column):
-            it.rank = float(pos + 1)
-        if _log_text:
-            _log(item, actor, "edit", _log_text)
-        _touch(item, actor)
-        return Change("reorder", before, _snapshot(item), {"delta": j - i})
+        item.priority = neighbour.priority
+    for pos, it in enumerate(column):
+        it.rank = float(pos + 1)
+    _touch(item, actor)
+    return j - i
 
 
 def archive(store: BoardStore, item_id: int, *, actor: str = "user") -> Change:
@@ -438,16 +442,23 @@ _RESTORED_FIELDS = ("title", "body", "type", "priority", "status", "rank", "clai
 def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
     """Undo a previous :class:`Change` as a new transaction (safe alongside other writers).
 
-    The item's activity log is kept (so notes written meanwhile are not lost) and an
-    ``undo`` entry is appended.
+    The log entries the undone change wrote are removed and the undo itself logs
+    nothing, so the item reads as if the change never happened. Entries written
+    meanwhile (e.g. an agent's note) are kept.
     """
     _check_actor(actor)
-    if change.op == "reorder":
-        delta = change.meta.get("delta", 0)
-        if not delta:
-            return change
-        return reorder(store, change.item.id, -delta, actor=actor, _log_text="undo: moved back")
     with store.transaction() as board:
+        if change.op == "reorder":
+            delta = change.meta.get("delta", 0)
+            current = board.get(change.item.id)
+            if not delta or current is None:
+                return change
+            before = _snapshot(current)
+            _move_in_column(board, current, -delta, actor, log=False)
+            if change.before.priority != change.after.priority and current.priority == change.after.priority:
+                current.priority = change.before.priority  # the band it adopted goes back too
+            _drop_logged_by(current, change)
+            return Change("revert", before, _snapshot(current))
         if change.before is None:  # undo add
             item = board.get(change.after.id)  # type: ignore[union-attr]
             if item is None:
@@ -459,9 +470,8 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             board.items.remove(item)
             return Change("revert", _snapshot(item), None)
         current = board.get(change.before.id)
-        if current is None:  # undo purge
+        if current is None:  # undo purge: back exactly as it was
             restored = change.before.copy()
-            _log(restored, actor, "edit", "restored (undo delete)")
             board.items.append(restored)
             board.next_id = max(board.next_id, restored.id + 1)
             return Change("revert", None, _snapshot(restored))
@@ -486,25 +496,17 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             return Change("revert", before, _snapshot(current))
         if "status" in restored and current.status in ("inbox", "todo"):
             current.claimed_by = None
-        text = "undo: " + ", ".join(_describe_undo(f, getattr(change.after, f), getattr(change.before, f))
-                                    for f in restored if f != "claimed_by" or restored == ["claimed_by"])
-        if conflicts:
-            text += f" (kept newer {', '.join(conflicts)})"
-        _log(current, actor, "edit", text)
+        _drop_logged_by(current, change)
         _touch(current, actor)
         return Change("revert", before, _snapshot(current))
 
 
-def _describe_undo(field: str, undone, restored) -> str:
-    """Human-readable piece of an undo log entry: what went back to what."""
-    if field == "status":
-        return f"status {undone} -> {restored}"
-    if field == "priority":
-        return f"priority P{undone} -> P{restored}"
-    if field == "type":
-        return f"type {undone} -> {restored}"
-    if field == "rank":
-        return "order restored"
-    if field == "claimed_by":
-        return f"claim {undone or 'none'} -> {restored or 'none'}"
-    return f"{field} restored"  # title, body
+def _drop_logged_by(item: Item, change: Change) -> None:
+    """Remove from ``item.log`` the entries ``change`` appended (newest match first)."""
+    if change.before is None or change.after is None:
+        return
+    for entry in reversed(change.after.log[len(change.before.log):]):
+        for k in range(len(item.log) - 1, -1, -1):
+            if item.log[k] == entry:
+                del item.log[k]
+                break

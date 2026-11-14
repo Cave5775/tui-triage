@@ -150,18 +150,33 @@ def test_undo_add_refused_after_agent_touched_it(store):
     assert store.load().get(added.after.id) is not None
 
 
-def test_every_undo_writes_a_descriptive_log_entry(store):
-    """triage #8: undo must show up in the item's activity log, saying what was reverted."""
-    a = ops.add(store, "a", status="todo").after
-    b = ops.add(store, "b", status="todo").after
+def test_undo_removes_the_undone_log_entries_and_adds_none(store):
+    """triage #8: after undo the log reads as if the change never happened."""
+    a = ops.add(store, "a", status="todo", priority=3).after
+    b = ops.add(store, "b", status="todo", priority=2).after
     cases = [
-        (lambda: ops.advance(store, a.id), "undo: status doing -> todo"),
-        (lambda: ops.update(store, a.id, priority=1, type="fix"), "undo: type fix -> feature, priority P1 -> P3"),
-        (lambda: ops.reorder(store, b.id, -1), "undo: moved back"),
-        (lambda: ops.archive(store, a.id), "undo: status archived -> todo"),
+        lambda: ops.advance(store, a.id),
+        lambda: ops.update(store, a.id, priority=1, type="fix"),
+        lambda: ops.reorder(store, a.id, -1),  # crosses into b's band: logs a priority change
+        lambda: ops.archive(store, a.id),
     ]
-    for make, expected in cases:
+    for make in cases:
+        log_before = store.load().get(a.id).log
         change = make()
+        assert len(change.after.log) > len(log_before)
         ops.revert(store, change)
-        last = store.load().get(change.item.id).log[-1]
-        assert (last.kind, last.by, last.text) == ("edit", "user", expected)
+        assert store.load().get(a.id).log == log_before
+    assert [(i.title, i.priority) for i in store.load().sorted_items("todo")] == [("b", 2), ("a", 3)]
+
+    # undoing a delete brings the item back with its log untouched
+    log_before = store.load().get(b.id).log
+    ops.revert(store, ops.purge(store, b.id))
+    assert store.load().get(b.id).log == log_before
+
+
+def test_undo_keeps_entries_written_meanwhile(store):
+    item = ops.add(store, "x", status="todo").after
+    moved = ops.advance(store, item.id)
+    ops.note(store, item.id, "agent note", actor="agent")
+    log = ops.revert(store, moved).after.log
+    assert [e.text for e in log] == ["created in todo", "agent note"]
