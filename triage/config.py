@@ -188,7 +188,11 @@ def set_value(key: str, value: Any, board_id: str | None = None) -> None:
         _prune(expected)
         table = (("boards", board_id) if board_id else ()) + tuple(parents)
         try:
-            text = path.read_text(encoding="utf-8", newline="") if path.exists() else ""
+            text = ""
+            if path.exists():
+                # open() rather than read_text(newline=...), which needs Python 3.13+
+                with path.open(encoding="utf-8", newline="") as f:
+                    text = f.read()
         except OSError:
             text = ""
         new = _edit_line(text, table, leaf, value)
