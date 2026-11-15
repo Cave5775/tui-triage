@@ -17,10 +17,11 @@ Your coding agent (for example Claude Code), working in a normal session in that
 You need Python 3.11+ and git.
 
 ```sh
-cd triage-board
-pip install -e .          # adds the `triage` command
-triage install-skill      # optional: teaches Claude Code how to use the board
+pipx install triage-board   # or: pip install triage-board — adds the `triage` command
+triage install-skill        # optional: teaches Claude Code how to use the board
 ```
+
+To run the latest unreleased version, use `pipx install git+https://github.com/Cave5775/triage-board`.
 
 `install-skill` writes `~/.claude/skills/triage/SKILL.md`, so every Claude Code session, in any repo, knows the board exists and how to use it. It changes nothing inside your repositories.
 
@@ -235,8 +236,15 @@ Exit codes: `0` ok, `1` error (the reason is on stderr, or in the JSON), `2` wro
 ## Development
 
 ```sh
+git clone https://github.com/Cave5775/triage-board && cd triage-board
 pip install -e .[dev]
 python -m pytest -q        # about 270 tests, about 2 minutes (the TUI tests wait on live polling)
 ```
 
 The code is split into a small core that every change goes through (`triage/ops.py`, `store.py`, `config.py`, `model.py`, `paths.py`), plus two front ends: `triage/cli.py` and `triage/tui/`. `docs/CONTRACT.md` describes the core API. The TUI's keymap is defined once in `triage/tui/keys.py` (named commands with default keys, and the hint lists for each context). It drives the key bindings, the bottom bar, the `?` help screen and `triage config init|keys`, and the `[keys]` table in `config.toml` is overlaid on it at startup.
+
+Releases are published to PyPI from a git tag by GitHub Actions; see `docs/RELEASING.md`.
+
+## License
+
+MIT, see `LICENSE`.

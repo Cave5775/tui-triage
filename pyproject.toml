@@ -1,20 +1,47 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "triage-board"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Keyboard-driven terminal triage board per repository, shared between you and your coding agent."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Cave" }]
 requires-python = ">=3.11"
 dependencies = ["textual>=0.80"]
+keywords = ["triage", "kanban", "todo", "tui", "textual", "claude-code", "coding-agent", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/Cave5775/triage-board"
+Repository = "https://github.com/Cave5775/triage-board"
+Issues = "https://github.com/Cave5775/triage-board/issues"
+Changelog = "https://github.com/Cave5775/triage-board/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "build>=1.2", "twine>=5"]
 
 [project.scripts]
 triage = "triage.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "triage.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["triage*"]
