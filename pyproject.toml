@@ -7,7 +7,7 @@ name = "triage-board"
 dynamic = ["version"]
 description = "Keyboard-driven terminal triage board per repository, shared between you and your coding agent."
 readme = "README.md"
-license = "MIT"
+license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Cave" }]
 requires-python = ">=3.11"

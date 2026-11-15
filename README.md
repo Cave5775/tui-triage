@@ -247,4 +247,4 @@ Releases are published to PyPI from a git tag by GitHub Actions; see `docs/RELEA
 
 ## License
 
-MIT, see `LICENSE`.
+GNU General Public License v3.0 or later, see `LICENSE`.
