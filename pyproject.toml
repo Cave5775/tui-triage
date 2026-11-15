@@ -29,10 +29,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Cave5775/triage-board"
-Repository = "https://github.com/Cave5775/triage-board"
-Issues = "https://github.com/Cave5775/triage-board/issues"
-Changelog = "https://github.com/Cave5775/triage-board/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Cave5775/tui-triage"
+Repository = "https://github.com/Cave5775/tui-triage"
+Issues = "https://github.com/Cave5775/tui-triage/issues"
+Changelog = "https://github.com/Cave5775/tui-triage/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "build>=1.2", "twine>=5"]

@@ -14,5 +14,5 @@ First public release.
 - `triage install-skill` installs a Claude Code skill that teaches agents to use the board.
 - Customisable keybindings and settings in `~/.triage/config.toml`.
 
-[Unreleased]: https://github.com/Cave5775/triage-board/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Cave5775/triage-board/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Cave5775/tui-triage/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Cave5775/tui-triage/releases/tag/v0.1.0

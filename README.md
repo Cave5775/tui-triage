@@ -21,7 +21,7 @@ pipx install triage-board   # or: pip install triage-board — adds the `triage`
 triage install-skill        # optional: teaches Claude Code how to use the board
 ```
 
-To run the latest unreleased version, use `pipx install git+https://github.com/Cave5775/triage-board`.
+To run the latest unreleased version, use `pipx install git+https://github.com/Cave5775/tui-triage`.
 
 `install-skill` writes `~/.claude/skills/triage/SKILL.md`, so every Claude Code session, in any repo, knows the board exists and how to use it. It changes nothing inside your repositories.
 
@@ -236,7 +236,7 @@ Exit codes: `0` ok, `1` error (the reason is on stderr, or in the JSON), `2` wro
 ## Development
 
 ```sh
-git clone https://github.com/Cave5775/triage-board && cd triage-board
+git clone https://github.com/Cave5775/tui-triage && cd tui-triage
 pip install -e .[dev]
 python -m pytest -q        # about 270 tests, about 2 minutes (the TUI tests wait on live polling)
 ```
