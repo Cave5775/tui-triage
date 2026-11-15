@@ -291,7 +291,7 @@ def default_config_text(keys_section: str = "") -> str:
     ``keys_section`` is the ``[keys]`` table text (``triage.tui.keys.default_keys_toml()``).
     """
     lines = [
-        "# triage-board configuration (written by `triage config init`).",
+        "# tui-triage configuration (written by `triage config init`).",
         "# Every setting is shown at its default; edit a value or delete a line to get the default back.",
         "# `triage config set` and the TUI settings screen edit single lines and keep your comments.",
         "# Per-board overrides go in tables like [boards.\"<board id>\".agent] (set with `triage config set --board KEY VALUE`).",

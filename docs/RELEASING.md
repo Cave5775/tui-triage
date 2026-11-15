@@ -4,10 +4,10 @@ Releases are built and published by GitHub Actions (`.github/workflows/release.y
 
 ## One-time setup
 
-1. The GitHub repository is `Cave5775/tui-triage`; the PyPI project is `triage-board`. If either changes, update the URLs in `pyproject.toml`, `CHANGELOG.md` and `README.md`.
+1. The GitHub repository and the PyPI project are both `tui-triage` (`Cave5775/tui-triage`). If either changes, update the URLs in `pyproject.toml`, `CHANGELOG.md` and `README.md`.
 2. On GitHub, under **Settings → Environments**, create two environments: `pypi` and `testpypi`. Adding yourself as a required reviewer on `pypi` is recommended.
 3. On [pypi.org](https://pypi.org/manage/account/publishing/), add a *pending trusted publisher*:
-   - PyPI project name: `triage-board`
+   - PyPI project name: `tui-triage`
    - Owner: `Cave5775`, repository: `tui-triage`
    - Workflow name: `release.yml`
    - Environment name: `pypi`

@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/triage-board/
+      url: https://pypi.org/project/tui-triage/
     permissions:
       id-token: write   # PyPI Trusted Publishing
     steps:
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/triage-board/
+      url: https://test.pypi.org/project/tui-triage/
     permissions:
       id-token: write
     steps:

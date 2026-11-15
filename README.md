@@ -1,4 +1,4 @@
-# triage-board
+# tui-triage
 
 **A to-do board for each of your repositories, shared by you and your coding agent.**
 
@@ -17,7 +17,7 @@ Your coding agent (for example Claude Code), working in a normal session in that
 You need Python 3.11+ and git.
 
 ```sh
-pipx install triage-board   # or: pip install triage-board — adds the `triage` command
+pipx install tui-triage   # or: pip install tui-triage — adds the `triage` command
 triage install-skill        # optional: teaches Claude Code how to use the board
 ```
 

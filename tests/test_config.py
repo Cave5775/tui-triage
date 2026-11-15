@@ -183,4 +183,4 @@ def test_init_config_refuses_to_overwrite_unless_forced(triage_home):
         config.init_config()
     path.write_text("# mine\n", encoding="utf-8")
     config.init_config(force=True)
-    assert path.read_text(encoding="utf-8").startswith("# triage-board configuration")
+    assert path.read_text(encoding="utf-8").startswith("# tui-triage configuration")

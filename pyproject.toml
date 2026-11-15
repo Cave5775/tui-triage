@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "triage-board"
+name = "tui-triage"
 dynamic = ["version"]
 description = "Keyboard-driven terminal triage board per repository, shared between you and your coding agent."
 readme = "README.md"
