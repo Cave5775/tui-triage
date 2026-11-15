@@ -302,7 +302,8 @@ def test_install_skill_default_dir_is_under_home(tmp_path, monkeypatch):
 def test_skill_content():
     lines = skill.SKILL_MD.splitlines()
     assert len(lines) <= 80
-    for needle in ("triage claim", "triage done", "triage note", "triage release", "triage add", "--json", "triage config get", "bounced"):
+    for needle in ("triage claim", "triage done", "triage note", "triage release", "triage add", "--json", "triage config get", "bounced",
+                   "commit messages"):
         assert needle in skill.SKILL_MD
 
 
