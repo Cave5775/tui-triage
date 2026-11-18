@@ -441,3 +441,16 @@ def test_config_keys_reports_overrides_and_problems(run, triage_home):
 def test_config_keys_is_read_only_for_everyone(run):
     assert run("config", "keys")[0] == 0  # the agent may read
     assert run("config", "keys", "extra")[0] == 1
+
+
+def test_list_sort_is_one_list_across_statuses(run, store):
+    jrun(run, "add", "old todo", "--status", "todo")
+    jrun(run, "add", "new inbox", "--status", "inbox")
+    jrun(run, "add", "mid todo", "--status", "todo")
+    with store.transaction() as board:
+        for item_id, day in ((1, 1), (2, 3), (3, 2)):
+            board.get(item_id).created_at = f"2026-01-0{day}T00:00:00Z"
+    assert [i["id"] for i in jrun(run, "list")] == [2, 1, 3]  # grouped by status: inbox, then todo
+    assert [i["id"] for i in jrun(run, "list", "--sort", "created")] == [2, 3, 1]
+    assert [i["id"] for i in jrun(run, "list", "--sort", "oldest", "--status", "todo")] == [1, 3]
+    assert run("list", "--sort", "nope")[0] != 0

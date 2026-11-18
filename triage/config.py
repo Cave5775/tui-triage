@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .model import FLOW
+from .model import FLOW, SORTS
 from .paths import config_path
 from .store import atomic_write_text, file_lock
 
@@ -54,6 +54,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("ui.new_item_status", str, "inbox", "Status for items added in the TUI", ("inbox", "todo")),
     Setting("ui.confirm_delete", bool, True, "Ask before permanently deleting"),
     Setting("ui.poll_seconds", float, 1.0, "How often the TUI checks the board file for outside changes"),
+    Setting("ui.sort", str, "priority",
+            "Initial order of the TUI item list (o / O cycle it)", tuple(SORTS)),
 )
 SETTINGS_BY_KEY = {s.key: s for s in SETTINGS}
 DEFAULTS = {s.key: s.default for s in SETTINGS}

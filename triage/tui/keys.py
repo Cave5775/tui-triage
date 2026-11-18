@@ -67,6 +67,9 @@ COMMANDS: tuple[Command, ...] = (
     _c("tab_all", "0", "Navigate", "Show All (every non-archived status)", "goto_tab('all')"),
     _c("tab_archived", "9", "Navigate", "Show Archived (also h/l past All)", "goto_tab('archived')"),
     _c("filter", "slash", "Navigate", "Filter by title/body (enter keeps it, esc clears it)", "filter"),
+    _c("sort_next", "o", "Navigate", "Sort by: priority, last activity, newest, oldest, title", "sort_next",
+       row="sort"),
+    _c("sort_prev", "O", "Navigate", "Previous sort order", "sort_prev", row="sort"),
     _c("focus_detail", "enter", "Navigate", "Focus the detail pane to scroll it", "focus_detail",
        contexts=("list",)),
     _c("toggle_detail", "tab", "Navigate", "Switch focus between the item list and the detail pane",
@@ -92,8 +95,8 @@ COMMANDS: tuple[Command, ...] = (
     _c("prio_down", "minus", "Triage", "Lower priority", "prio_down"),
     _c("type_next", "t", "Triage", "Cycle the type forward", "type_next"),
     _c("type_prev", "T", "Triage", "Cycle the type backward", "type_prev"),
-    _c("reorder_down", "J", "Triage", "Move the item down within its column", "reorder_down"),
-    _c("reorder_up", "K", "Triage", "Move the item up within its column", "reorder_up"),
+    _c("reorder_down", "J", "Triage", "Move the item down within its column (priority sort)", "reorder_down"),
+    _c("reorder_up", "K", "Triage", "Move the item up within its column (priority sort)", "reorder_up"),
     _c("archive", "d", "Triage", "Press twice to archive (in Archived: delete, asks y/n)", "chord('archive')"),
     _c("purge", "D", "Triage", "Permanently delete (Archived tab; asks y/n)", ("purge", "purge_hint")),
     _c("undo", "u", "Triage", "Undo the last change made in this session", "undo"),
@@ -465,7 +468,10 @@ def fit_hints(entries: list[tuple[str, str]], width: int) -> tuple[list[tuple[st
 
 # ---- help screen ----------------------------------------------------------------
 
-ROW_HELP = {"tabs": "jump to Inbox / Todo / Doing / Review / Done"}
+ROW_HELP = {
+    "tabs": "jump to Inbox / Todo / Doing / Review / Done",
+    "sort": "sort by priority / last activity / newest / oldest / title (forward / back)",
+}
 
 
 def _compress(keys: list[str]) -> str:

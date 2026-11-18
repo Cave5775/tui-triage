@@ -67,6 +67,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `Tab` / `Shift+Tab` | switch between the item list and the detail pane, so you can scroll a long note without reaching for `Enter` and `Esc` |
 | `1` … `5` | Inbox, Todo, Doing, Review, Done (`0` = all, `9` = archived) |
 | `/` | filter by text (`Enter` keeps it, `Esc` clears it) |
+| `o` / `O` | sort by priority, last activity, newest, oldest or title (forward / back); the list title shows the order |
 | `Enter` | read the selected item in the detail pane (`Esc` or `Tab` to come back) |
 | `R` | switch to another repo's board |
 
@@ -88,7 +89,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `y` / `n` | in Review: accept / send back with a reason |
 | `p` then `1`–`4`, or `+` `-` | set the priority, or raise / lower it |
 | `t` / `T` | cycle the type (feature, fix, change, chore, idea) |
-| `J` / `K` | move the item down / up in the list |
+| `J` / `K` | move the item down / up in the list (priority sort only) |
 | `d` `d` | archive (press `d` twice) |
 | `u` | undo your last change |
 | `Y` | copy `triage show <id>` to paste into an agent chat |
@@ -183,6 +184,7 @@ triage config init                                             # write a complet
 | `ui.new_item_status` | `inbox` | where your quick-adds go when you're not on the Inbox or Todo tab |
 | `ui.confirm_delete` | on | ask before permanently deleting |
 | `ui.poll_seconds` | `1.0` | how quickly the board shows the agent's changes |
+| `ui.sort` | `priority` | the list order the TUI starts with: `priority`, `activity`, `created` (newest first), `oldest`, `title` |
 
 Settings are stored in `~/.triage/config.toml` (or the file named by `TRIAGE_CONFIG`). Only you can change them: the CLI refuses `config set` unless it is run with `--as user`, and the skill tells the agent never to try. Changing a setting edits just that one line, so the comments and the `[keys]` table you wrote stay as they are.
 
@@ -213,7 +215,7 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | command | what it does |
 |---|---|
 | `triage` | open the board |
-| `triage list [--status todo,doing] [--all]` | list items (`--all` includes archived) |
+| `triage list [--status todo,doing] [--all] [--sort S]` | list items (`--all` includes archived; `--sort activity\|created\|oldest\|title` gives one list across statuses) |
 | `triage show ID` | one item with its description and full log |
 | `triage next` | the item an agent should pick up next (doesn't claim it) |
 | `triage claim [ID]` | start work (→ Doing); without an ID, claims the next item |

@@ -25,7 +25,7 @@ from textual.timer import Timer
 from textual.widgets import Input, OptionList, Static
 
 from .. import config, ops
-from ..model import FLOW, TYPES, Board, Item
+from ..model import FLOW, SORTS, TYPES, Board, Item
 from ..paths import RepoNotFound, RepoRef, resolve_repo
 from ..store import BoardStore, LockTimeout, touch_registry
 from . import keys
@@ -153,6 +153,8 @@ class TriageApp(App[None]):
         self.cfg: dict = dict(config.DEFAULTS)
         self.tab = "inbox"
         self.filter_text = ""
+        self.sort = "priority"  # cycled with o / O; follows ui.sort whenever that setting changes
+        self._sort_default: str | None = None
         self.undo_stack: list[ops.Change] = []
         self._chord: tuple[str, float | None] | None = None
         self._flash: set[int] = set()
@@ -235,6 +237,10 @@ class TriageApp(App[None]):
             self.cfg = ops.config_for(self.store) if self.store else dict(config.DEFAULTS)
         except config.ConfigError as exc:
             self.say(str(exc), error=True)
+        default = self.cfg.get("ui.sort", "priority")
+        if default != self._sort_default:
+            self._sort_default = default
+            self.sort = default if default in SORTS else "priority"
         try:
             self._config_token = config.config_path().stat().st_mtime_ns
         except OSError:
@@ -305,7 +311,7 @@ class TriageApp(App[None]):
     def visible_items(self) -> list[Item]:
         if self.board is None:
             return []
-        items = self.board.sorted_items(tab_statuses(self.tab))
+        items = self.board.sorted_items(tab_statuses(self.tab), self.sort)
         q = self.filter_text.strip().lower()
         if q:
             items = [i for i in items if q in i.title.lower() or q in i.body.lower()]
@@ -340,6 +346,8 @@ class TriageApp(App[None]):
             + (f" — press {km.first('quick_add')} to add" if self.tab != "archived" else ""))
         self.items_view.set_items(items, pal, self.tab in ("all", "archived"), self._flash, select_id, empty, reset)
         title = TAB_LABELS[self.tab] + (f" · {len(items)}/{total}" if self.filter_text else f" · {total}")
+        if self.sort != "priority":
+            title += f" · by {SORTS[self.sort]}"
         self._q("#left").border_title = title
         self.update_detail()
         self.refresh_bindings()
@@ -594,6 +602,9 @@ class TriageApp(App[None]):
         item = self._need_item()
         if item is None:
             return
+        if self.sort != "priority":
+            self.say(f"manual order needs the priority sort (now by {SORTS[self.sort]}; press {self.keymap.first('sort_next')})")
+            return
         change = self._op(ops.reorder, item.id, delta, select=item.id)
         if change is not None and not change.changed:
             self.say(f"{item.ref} is already at the {'bottom' if delta > 0 else 'top'}")
@@ -606,6 +617,19 @@ class TriageApp(App[None]):
 
     def action_reorder_up(self) -> None:
         self._reorder(-1)
+
+    def _cycle_sort(self, step: int) -> None:
+        order = list(SORTS)
+        self.sort = order[(order.index(self.sort) + step) % len(order)]
+        item = self.current_item()
+        self.render_all(item.id if item else None)
+        self.say(f"sorted by {SORTS[self.sort]}")
+
+    def action_sort_next(self) -> None:
+        self._cycle_sort(1)
+
+    def action_sort_prev(self) -> None:
+        self._cycle_sort(-1)
 
     def _archive_or_purge(self, item: Item) -> None:
         if item.status == "archived":

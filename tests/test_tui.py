@@ -1440,3 +1440,46 @@ def test_bindings_and_help_come_from_the_command_table():
     assert ("ctrl+q", "quit") in bound  # Textual's own defaults are still there
     shown = {key for _, rows in keys.help_sections() for key, _ in rows}
     assert {"tab", "1-5", "d d", "m …", "p …", "space", "?", "q"} <= shown
+
+
+def _stamp_created(store, ids_by_day):
+    with store.transaction() as board:
+        for item_id, day in ids_by_day.items():
+            it = board.get(item_id)
+            it.created_at = it.updated_at = f"2026-01-0{day}T00:00:00Z"
+
+
+async def test_o_cycles_sort_and_J_needs_priority_sort(store):
+    a, b, c = seed(store, ("b item", "todo", 3), ("c item", "todo", 3), ("a item", "todo", 3))
+    _stamp_created(store, {a: 1, b: 3, c: 2})
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        assert ids(app) == [a, b, c]
+        await pilot.press("o")  # last activity
+        await settle(pilot)
+        assert ids(app) == [b, c, a] and "by last activity" in app._q("#left").border_title
+        ranks = [i.rank for i in store.load().items]
+        await pilot.press("J")  # manual order is refused outside the priority sort
+        await settle(pilot)
+        assert [i.rank for i in store.load().items] == ranks and ids(app) == [b, c, a]
+        await pilot.press("o", "o", "o")  # newest, oldest, title
+        await settle(pilot)
+        assert ids(app) == [c, a, b] and "by title" in app._q("#left").border_title
+        await pilot.press("O", "O", "O", "O")  # back to priority
+        await settle(pilot)
+        assert ids(app) == [a, b, c] and "by" not in app._q("#left").border_title
+
+
+async def test_ui_sort_setting_is_the_initial_order(store):
+    a, b = seed(store, ("first", "todo", 3), ("second", "todo", 3))
+    _stamp_created(store, {a: 1, b: 2})
+    config.set_value("ui.sort", "created")
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        assert ids(app) == [b, a] and app.sort == "created"

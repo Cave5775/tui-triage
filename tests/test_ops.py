@@ -180,3 +180,27 @@ def test_undo_keeps_entries_written_meanwhile(store):
     ops.note(store, item.id, "agent note", actor="agent")
     log = ops.revert(store, moved).after.log
     assert [e.text for e in log] == ["created in todo", "agent note"]
+
+
+def _stamp(store, times):
+    """Set (created_at, updated_at) per item id; timestamps only have second resolution."""
+    with store.transaction() as board:
+        for item_id, (created, updated) in times.items():
+            it = board.get(item_id)
+            it.created_at, it.updated_at = created, updated
+
+
+def test_sorted_items_by_each_sort(store):
+    from triage.model import SORTS
+    a = ops.add(store, "beta", status="todo", priority=2).item.id
+    b = ops.add(store, "Alpha", status="todo", priority=3).item.id
+    c = ops.add(store, "gamma", status="doing", priority=1).item.id
+    _stamp(store, {a: ("2026-01-01T00:00:00Z", "2026-01-05T00:00:00Z"),
+                   b: ("2026-01-02T00:00:00Z", "2026-01-09T00:00:00Z"),
+                   c: ("2026-01-03T00:00:00Z", "2026-01-04T00:00:00Z")})
+    board = store.load()
+    order = {by: [i.id for i in board.sorted_items(["todo", "doing"], by)] for by in SORTS}
+    assert order == {"priority": [c, a, b], "activity": [b, a, c], "created": [c, b, a],
+                     "oldest": [a, b, c], "title": [b, a, c]}
+    with pytest.raises(ValueError):
+        board.sorted_items("todo", "nope")

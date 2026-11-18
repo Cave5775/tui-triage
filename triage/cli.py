@@ -15,7 +15,7 @@ from typing import Any
 
 from . import config as cfgmod
 from . import ops, store as storemod
-from .model import ACTORS, FLOW, PRIORITY_LABELS, STATUSES, Item, normalize_status
+from .model import ACTORS, FLOW, PRIORITY_LABELS, SORTS, STATUSES, Item, normalize_status
 from .paths import RepoNotFound, resolve_repo
 from .store import LockTimeout
 
@@ -146,9 +146,12 @@ def cmd_list(args: argparse.Namespace) -> int:
     else:
         wanted = list(FLOW)
     items: list[Item] = []
-    for status in STATUSES:
-        if status in wanted:
-            items.extend(board.sorted_items(status))
+    if args.sort != "priority":  # a view across the selected statuses, e.g. what changed last
+        items = board.sorted_items(wanted, args.sort)
+    else:
+        for status in STATUSES:
+            if status in wanted:
+                items.extend(board.sorted_items(status))
     if args.json:
         _emit_json([ops.item_json(i) for i in items])
     else:
@@ -469,6 +472,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("list", cmd_list, "list items grouped by status in flow order")
     sp.add_argument("--status", help="comma-separated statuses to show, e.g. todo,doing")
     sp.add_argument("--all", action="store_true", help="include archived items")
+    sp.add_argument("--sort", choices=tuple(SORTS), default="priority",
+                    help="priority (default: grouped by status), or one list by activity (latest first), "
+                         "created (newest first), oldest or title")
 
     sp = add("show", cmd_show, "show one item with its body and full log")
     sp.add_argument("id", type=_item_id)

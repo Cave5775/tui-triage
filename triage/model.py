@@ -100,8 +100,8 @@ class Board:
                 return it
         return None
 
-    def sorted_items(self, statuses: str | list[str] | tuple[str, ...] | None = None) -> list[Item]:
-        """Items in display order: priority, then manual rank, then id.
+    def sorted_items(self, statuses: str | list[str] | tuple[str, ...] | None = None, by: str = "priority") -> list[Item]:
+        """Items in display order (see :data:`SORTS`; default priority, then manual rank, then id).
 
         ``statuses`` may be a single status, a collection, or None for all non-archived.
         """
@@ -111,7 +111,7 @@ class Board:
             wanted = {statuses}
         else:
             wanted = set(statuses)
-        return sorted((i for i in self.items if i.status in wanted), key=sort_key)
+        return sort_items([i for i in self.items if i.status in wanted], by)
 
     def counts(self) -> dict[str, int]:
         out = {s: 0 for s in STATUSES}
@@ -147,6 +147,31 @@ class Board:
 
 def sort_key(item: Item) -> tuple:
     return (item.priority, item.rank, item.id)
+
+
+# sort name -> label. "priority" is the manual order (priority, then rank); the others are views.
+SORTS: dict[str, str] = {
+    "priority": "priority",
+    "activity": "last activity",
+    "created": "newest",
+    "oldest": "oldest",
+    "title": "title",
+}
+
+
+def sort_items(items: list[Item], by: str = "priority") -> list[Item]:
+    """``items`` in the order named by ``by`` (a :data:`SORTS` key); ties fall back to id."""
+    if by == "activity":
+        return sorted(items, key=lambda i: (i.updated_at, i.id), reverse=True)
+    if by == "created":
+        return sorted(items, key=lambda i: (i.created_at, i.id), reverse=True)
+    if by == "oldest":
+        return sorted(items, key=lambda i: (i.created_at, i.id))
+    if by == "title":
+        return sorted(items, key=lambda i: (i.title.casefold(), i.id))
+    if by != "priority":
+        raise ValueError(f"unknown sort {by!r}; expected one of {', '.join(SORTS)}")
+    return sorted(items, key=sort_key)
 
 
 def normalize_type(value: str) -> str:
