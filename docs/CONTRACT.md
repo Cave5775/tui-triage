@@ -24,7 +24,12 @@ through `triage.ops`, and all config writes go through `triage.config.set_value`
 - `TYPE_ALIASES` / `STATUS_ALIASES`: `normalize_type(s)`, `normalize_status(s)`, `normalize_priority(v)` (each raises `ValueError`)
 - `Item(id, title, body, type, priority, status, rank, created_by, updated_by, claimed_by, created_at, updated_at, log: list[LogEntry])`
   with `.ref` (`"#12"`), `.to_dict()` and `.copy()`
-- `LogEntry(at, by, kind, text)`, where kind is one of `note|status|edit|summary|create`
+- `LogEntry(at, by, kind, text, data={})`, where kind is one of `note|status|edit|summary|create|question|answer`.
+  `data` is only used by the last two: a `question` entry holds `{"options": [...], "multi": bool}` (its `text` is the
+  question), an `answer` entry holds `{"choices": [...], "text": "..."}`. Empty `data` is not written, so old board files load unchanged.
+- `Item.open_question() -> Question|None` (the latest `question` entry with no `answer` after it) and
+  `Item.latest_answer() -> Answer|None` (the reply to the latest question); `Question(text, options, multi, at, by)`,
+  `Answer(choices, text, question, at, by)`, each with `.to_dict()`
 - `Board(board_id, repo_name, repo_path, rev, next_id, updated_at, items)` with
   `.get(id)`, `.sorted_items(statuses=None|str|list)` (None means every FLOW status, i.e. everything except archived; order is priority, rank, id) and `.counts()`
 
@@ -77,7 +82,7 @@ Front ends should catch `(TriageError, ValueError)`.
 | `config_for(store) -> dict` | effective config for the board |
 | `load(store) -> Board`, `get(store, id) -> Item` | reads |
 | `next_item(board, cfg) -> Item\|None` | unclaimed, from the pickup statuses, todo first |
-| `item_json(item) -> dict` | stable JSON shape (adds `ref`) |
+| `item_json(item) -> dict` | stable JSON shape (adds `ref`, `question` = the open question or null, `answer` = the reply to the latest question or null) |
 | `add(store, title, *, actor, body="", type="feature", priority=3, status=None, taken_by=None)` | the default status comes from config, per actor; `taken_by` is user only |
 | `update(store, id, *, actor, title=None, body=None, type=None, priority=None, taken_by=None)` | `taken_by` (`none`/`agent`/a name/`user`, user only) sets `claimed_by`, logged as `taken by: a -> b`, undoable |
 | `set_status(store, id, status, *, actor, note=None)` | |
@@ -88,6 +93,8 @@ Front ends should catch `(TriageError, ValueError)`.
 | `accept(store, id, *, actor="user", note=None)` | review → done |
 | `bounce(store, id, reason="", *, actor="user")` | review/done → todo, logs "bounced: reason"; user only (agents get PermissionDenied) |
 | `note(store, id, text, *, actor)` | always allowed |
+| `ask(store, id, question, options, multi=False, *, actor="agent")` | logs a `question`; 2-6 distinct non-empty options; asking again replaces an open question; always allowed |
+| `answer(store, id, choices, text="", *, actor="user")` | logs an `answer` to the open question (`InvalidOperation` when there is none); choices must be options (one unless `multi`), free text may replace or add to them; agents get PermissionDenied; undoable (`revert` removes the reply and reopens the question) |
 | `reorder(store, id, delta, *, actor)` | moves within the status column; adopts the neighbour's priority when crossing a band; meta has the delta |
 | `archive(store, id, *, actor)` | → archived (soft delete) |
 | `purge(store, id, *, actor)` | permanent delete |

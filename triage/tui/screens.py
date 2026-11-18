@@ -25,6 +25,7 @@ from ..paths import RepoNotFound, RepoRef, board_path, resolve_repo
 from ..store import list_boards, read_json
 from .fields import ChoiceField
 from .keys import Keymap, default_keymap, help_sections
+from .widgets import palette
 
 # ---- prompt ------------------------------------------------------------------
 
@@ -79,6 +80,149 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def action_answer(self, yes: bool) -> None:
         self.dismiss(yes)
+
+
+# ---- answer an agent's question ------------------------------------------------
+
+
+class AnswerScreen(ModalScreen["tuple[list[str], str] | None"]):
+    """The agent's question with its options as a keyboard-first list, plus an "Other" free-text row.
+
+    ``j``/``k`` or the arrows move, a number picks that row (single choice: it answers at once; multiple choice:
+    it toggles), ``space`` toggles in multiple-choice mode, ``enter`` submits. The last row is "Other": it focuses
+    a text input (``enter`` there submits the text; the arrows go back to the list). ``esc`` cancels.
+    Dismisses with ``(choices, text)``, or ``None`` when cancelled.
+    """
+
+    AUTO_FOCUS = ""  # the list is driven by the screen's own keys; the input only gets focus on the Other row
+    BINDINGS = [
+        Binding("escape", "cancel", "cancel", key_display="esc", show=True),
+        Binding("enter", "confirm", "submit", show=True),
+        Binding("space", "toggle", "toggle", show=False),
+        Binding("j,down", "move(1)", "down", show=False),
+        Binding("k,up", "move(-1)", "up", show=False),
+    ]
+
+    def __init__(self, ref: str, question) -> None:
+        super().__init__()
+        self._ref = ref
+        self._q = question
+        self._options = list(question.options)
+        self._index = 0  # 0..len(options); the last row is "Other"
+        self._checked: set[int] = set()
+
+    @property
+    def _other(self) -> int:
+        return len(self._options)
+
+    def compose(self) -> ComposeResult:
+        n = len(self._options)
+        keys = f"1-{n + 1}"
+        hint = (f"j/k move · {keys} or space toggle · enter submit · esc cancel" if self._q.multi
+                else f"j/k move · {keys} pick · enter confirm · esc cancel")
+        with Vertical(id="answer"):
+            yield Static(Text(self._q.text, style="bold"), id="answer-question")
+            yield Static(Text("pick any" if self._q.multi else "pick one", style="dim"), id="answer-kind")
+            yield Static("", id="answer-options")
+            with Horizontal(id="answer-other"):
+                yield Static("", id="answer-other-label")
+                yield Input(placeholder="type your own answer", id="answer-input")
+            yield Static("", id="answer-error")
+            yield Static(hint, id="answer-hint")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#answer").border_title = f"Question on {self._ref}"
+        self._redraw()
+
+    def _redraw(self) -> None:
+        accent = palette(self.app)["accent"]
+        rows = Text()
+        for i, option in enumerate(self._options):
+            on = i == self._index
+            rows.append("▸ " if on else "  ", style=f"bold {accent}")
+            rows.append(f"{i + 1}  ", style=f"bold {accent}" if on else "dim")
+            if self._q.multi:
+                rows.append("[x] " if i in self._checked else "[ ] ", style="bold" if i in self._checked else "dim")
+            rows.append(option, style="bold" if on else "")
+            rows.append("\n" if i < len(self._options) - 1 else "")
+        self.query_one("#answer-options", Static).update(rows)
+        on = self._index == self._other
+        label = Text()
+        label.append("▸ " if on else "  ", style=f"bold {accent}")
+        label.append(f"{self._other + 1}  ", style=f"bold {accent}" if on else "dim")
+        label.append("Other: ", style="bold" if on else "")
+        self.query_one("#answer-other-label", Static).update(label)
+
+    def _input_focused(self) -> bool:
+        return self.focused is self.query_one("#answer-input", Input)
+
+    def _error(self, text: str = "") -> None:
+        self.query_one("#answer-error", Static).update(Text(text, style="bold red"))
+
+    def _go_other(self) -> None:
+        self._index = self._other
+        self._redraw()
+        self._error()
+        self.query_one("#answer-input", Input).focus()
+
+    def _pick(self, i: int) -> None:
+        """Number key or ``space`` on row ``i``."""
+        if i == self._other:
+            self._go_other()
+        elif self._q.multi:
+            self._index = i
+            self._checked ^= {i}
+            self._error()
+            self._redraw()
+        else:
+            self.dismiss(([self._options[i]], ""))
+
+    def action_move(self, delta: int) -> None:
+        if self._input_focused():
+            self.set_focus(None)
+        self._index = max(0, min(self._other, self._index + delta))
+        self._error()
+        self._redraw()
+
+    def action_toggle(self) -> None:
+        if self._q.multi or self._index == self._other:
+            self._pick(self._index)
+        else:
+            self.dismiss(([self._options[self._index]], ""))
+
+    def action_confirm(self) -> None:
+        if self._input_focused():
+            self._submit_text()
+        elif self._index == self._other:
+            self._go_other()
+        elif self._q.multi:
+            self._checked = self._checked or {self._index}  # nothing ticked yet: the highlighted option is the pick
+            self.dismiss(([o for i, o in enumerate(self._options) if i in self._checked], ""))
+        else:
+            self.dismiss(([self._options[self._index]], ""))
+
+    def _submit_text(self) -> None:
+        text = self.query_one("#answer-input", Input).value.strip()
+        choices = [o for i, o in enumerate(self._options) if i in self._checked] if self._q.multi else []
+        if not text and not choices:
+            self._error("type an answer, or use ↑/↓ to pick an option")
+            return
+        self.dismiss((choices, text))
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit_text()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.character and event.character in "1234567" and not self._input_focused():
+            event.stop()
+            i = int(event.character) - 1
+            if i <= self._other:
+                self._pick(i)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 # ---- help --------------------------------------------------------------------

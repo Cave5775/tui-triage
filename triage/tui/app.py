@@ -30,7 +30,7 @@ from ..paths import RepoNotFound, RepoRef, resolve_repo
 from ..store import BoardStore, LockTimeout, touch_registry
 from . import keys
 from .quickadd import QuickAddScreen
-from .screens import ConfirmScreen, HelpScreen, ItemFormScreen, PromptScreen, RepoPickerScreen, SettingsScreen
+from .screens import AnswerScreen, ConfirmScreen, HelpScreen, ItemFormScreen, PromptScreen, RepoPickerScreen, SettingsScreen
 from .widgets import (
     TAB_IDS,
     TAB_LABELS,
@@ -301,7 +301,14 @@ class TriageApp(App[None]):
             self._flash_timer.stop()
         self._flash_timer = self.set_timer(FLASH_SECONDS, self._end_flash)
         refs = ", ".join(f"#{i}" for i in changed[:4]) + (f" +{len(changed) - 4}" if len(changed) > 4 else "")
-        self.say(f"agent updated {refs}")
+        asking = [
+            i for i in changed
+            if (q := new.get(i).open_question()) and (old.get(i) is None or old.get(i).open_question() != q)
+        ]
+        if asking:
+            self.say(f"agent asked a question on #{asking[0]} — {self.keymap.first('answer')} to answer")
+        else:
+            self.say(f"agent updated {refs}")
 
     def _end_flash(self) -> None:
         self._flash.clear()
@@ -357,7 +364,7 @@ class TriageApp(App[None]):
         return self._main_screen is not None
 
     def update_detail(self) -> None:
-        self.detail.show(self.current_item(), palette(self), self.keymap.first("edit"))
+        self.detail.show(self.current_item(), palette(self), self.keymap.first("edit"), self.keymap.first("answer"))
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id == "items":
@@ -409,7 +416,7 @@ class TriageApp(App[None]):
             dest = FLOW[FLOW.index(item.status) + 1]
         return keys.hint_entries(
             self.hint_context(), self.keymap, dest=dest, can_undo=bool(self.undo_stack),
-            filter_active=bool(self.filter_text.strip()),
+            filter_active=bool(self.filter_text.strip()), question=bool(item and item.open_question()),
         )
 
     def update_hints(self) -> None:
@@ -439,6 +446,9 @@ class TriageApp(App[None]):
             item = self.current_item()
             in_review = bool(item and item.status == "review")
             return in_review if action == "accept" else not in_review
+        if action == "answer":
+            item = self.current_item()
+            return bool(item and item.open_question())
         if action == "detail_back":
             return self.focused is self.detail
         if action == "clear_filter":
@@ -554,6 +564,22 @@ class TriageApp(App[None]):
     def action_accept_hint(self) -> None:
         if self._need_item():
             self.say(f"{self.keymap.first('accept')} accepts items in Review — this one is not there", error=True)
+
+    def action_answer(self) -> None:
+        item = self._need_item()
+        if item is None:
+            return
+        question = item.open_question()
+        if question is None:
+            self.say(f"{item.ref} has no question to answer", error=True)
+            return
+
+        def done(result: tuple[list[str], str] | None) -> None:
+            if result is not None:
+                choices, text = result
+                self._op(ops.answer, item.id, choices, text=text, what=f"answered {item.ref}")
+
+        self.push_screen(AnswerScreen(item.ref, question), done)
 
     def action_bounce(self) -> None:
         item = self._need_item()

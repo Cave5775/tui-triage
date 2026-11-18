@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,12 @@ def _full(item: Item) -> str:
     ]
     if item.body.strip():
         out += ["", item.body.rstrip()]
+    q, a = item.open_question(), item.latest_answer()
+    if q:
+        out += ["", f"Open question ({'pick any' if q.multi else 'pick one'}): {q.text}"]
+        out += [f"  {n}. {o}" for n, o in enumerate(q.options, 1)]
+    elif a:
+        out += ["", f"Question: {a.question}", f"Answer ({a.by}): {a.summary()}"]
     out += ["", "Log:"]
     if not item.log:
         out.append("  (empty)")
@@ -195,6 +202,53 @@ def cmd_tag(args: argparse.Namespace) -> int:
 
 def cmd_note(args: argparse.Namespace) -> int:
     return _show_change(args, "noted", ops.note(_store(args), args.id, _words(args.text), actor=args.actor))
+
+
+WAIT_POLL_SECONDS = 0.5
+
+
+def _answer_view(item: Item, asked_at: int) -> dict[str, Any]:
+    """``{id, answered, question, answer}`` for the question logged at index ``asked_at`` (the one just asked)."""
+    reply = next((e for e in item.log[asked_at + 1:] if e.kind == "answer"), None)
+    q = item.log[asked_at]
+    question = {"text": q.text, "options": q.data.get("options", []), "multi": bool(q.data.get("multi"))}
+    answer = None
+    if reply is not None:
+        answer = {"choices": reply.data.get("choices", []), "text": reply.data.get("text", ""),
+                  "by": reply.by, "at": reply.at}
+    return {"id": item.id, "answered": answer is not None, "question": question, "answer": answer}
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    st = _store(args)
+    change = ops.ask(st, args.id, _words(args.question), args.option or [], multi=args.multi, actor=args.actor)
+    asked_at = len(change.item.log) - 1
+    view = _answer_view(change.item, asked_at)
+    if args.wait is not None and not view["answered"]:
+        deadline = None if args.wait < 0 else time.monotonic() + args.wait
+        while not view["answered"] and (deadline is None or time.monotonic() < deadline):
+            time.sleep(WAIT_POLL_SECONDS if deadline is None else max(0.0, min(WAIT_POLL_SECONDS, deadline - time.monotonic())))
+            view = _answer_view(ops.get(st, args.id), asked_at)
+    if args.json:
+        _emit_json(view)
+    elif view["answered"]:
+        a = view["answer"]
+        print(f"#{args.id} answered by {a['by']}: " + ", ".join(a["choices"] + ([f"other: {a['text']}"] if a["text"] else [])))
+    elif args.wait is not None:
+        print(f"#{args.id}: no answer yet; read it later with `triage show {args.id}`")
+    else:
+        print(f"asked #{args.id}: {view['question']['text']}")
+    return 0
+
+
+def cmd_answer(args: argparse.Namespace) -> int:
+    change = ops.answer(_store(args), args.id, args.choice or [], args.text or "", actor=args.actor)
+    a = change.item.latest_answer()
+    if args.json:
+        _emit_json(ops.item_json(change.item))
+    else:
+        print(f"answered #{change.item.id}: {a.summary() if a else ''}")
+    return 0
 
 
 def cmd_done(args: argparse.Namespace) -> int:
@@ -501,6 +555,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("note", cmd_note, "append a note to an item's log")
     sp.add_argument("id", type=_item_id)
     sp.add_argument("text", nargs="+")
+
+    sp = add("ask", cmd_ask, "ask the user a multiple-choice question (they answer in the TUI)")
+    sp.add_argument("id", type=_item_id)
+    sp.add_argument("question", nargs="+")
+    sp.add_argument("--option", action="append", metavar="TEXT", help="an answer to offer; repeat for 2-6 options")
+    sp.add_argument("--multi", action="store_true", help="the user may pick several options")
+    sp.add_argument("--wait", nargs="?", type=float, const=-1.0, default=None, metavar="SECONDS",
+                    help="wait for the answer and print it (bare --wait: until answered; on timeout the question stays open)")
+
+    sp = add("answer", cmd_answer, "answer an item's open question (the user's job: use --as user)")
+    sp.add_argument("id", type=_item_id)
+    sp.add_argument("--choice", action="append", metavar="OPTION", help="an option to pick; repeat for several")
+    sp.add_argument("--text", help="free text (\"Other\"), alone or with choices")
 
     sp = add("done", cmd_done, "finish an item (-> review unless configured otherwise)")
     sp.add_argument("id", type=_item_id)

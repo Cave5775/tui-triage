@@ -15,7 +15,8 @@ PRIORITY_LABELS = {1: "urgent", 2: "high", 3: "normal", 4: "low"}
 ACTORS: tuple[str, ...] = ("user", "agent")
 USER_TAG = "user"  # Item.claimed_by value meaning "reserved by the user: the agent must not touch it"
 AGENT_TAG = "agent"  # the default name an agent takes an item under
-LOG_KINDS: tuple[str, ...] = ("note", "status", "edit", "summary", "create")
+LOG_KINDS: tuple[str, ...] = ("note", "status", "edit", "summary", "create", "question", "answer")
+MIN_OPTIONS, MAX_OPTIONS = 2, 6  # choices an agent may offer with a question
 
 # Aliases accepted wherever a type/status is parsed from text.
 TYPE_ALIASES = {
@@ -41,14 +42,51 @@ def now_iso() -> str:
 
 @dataclass
 class LogEntry:
+    """One activity entry. ``data`` carries the structured part of a ``question`` / ``answer`` entry."""
+
     at: str
     by: str
     kind: str
     text: str
+    data: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> "LogEntry":
-        return cls(at=d.get("at", ""), by=d.get("by", "user"), kind=d.get("kind", "note"), text=d.get("text", ""))
+        data = d.get("data")
+        return cls(at=d.get("at", ""), by=d.get("by", "user"), kind=d.get("kind", "note"), text=d.get("text", ""),
+                   data=dict(data) if isinstance(data, dict) else {})
+
+
+@dataclass(frozen=True)
+class Question:
+    """A multiple-choice question an agent put to the user (the ``question`` log entry, parsed)."""
+
+    text: str
+    options: tuple[str, ...]
+    multi: bool
+    at: str
+    by: str
+
+    def to_dict(self) -> dict:
+        return {"text": self.text, "options": list(self.options), "multi": self.multi, "at": self.at, "by": self.by}
+
+
+@dataclass(frozen=True)
+class Answer:
+    """The user's reply to the latest question: the options picked and/or free text ("Other")."""
+
+    choices: tuple[str, ...]
+    text: str
+    question: str
+    at: str
+    by: str
+
+    def to_dict(self) -> dict:
+        return {"choices": list(self.choices), "text": self.text, "question": self.question, "at": self.at, "by": self.by}
+
+    def summary(self) -> str:
+        parts = list(self.choices) + ([f"other: {self.text}"] if self.text else [])
+        return ", ".join(parts)
 
 
 @dataclass
@@ -72,7 +110,42 @@ class Item:
         return f"#{self.id}"
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        for entry in d["log"]:
+            if not entry["data"]:
+                del entry["data"]  # keep plain entries (and old board files) byte-for-byte as they were
+        return d
+
+    # ---- questions ------------------------------------------------------
+    def _latest_question_index(self) -> int | None:
+        for i in range(len(self.log) - 1, -1, -1):
+            if self.log[i].kind == "question":
+                return i
+        return None
+
+    def open_question(self) -> Question | None:
+        """The latest question, unless an ``answer`` entry came after it."""
+        i = self._latest_question_index()
+        if i is None or any(e.kind == "answer" for e in self.log[i + 1:]):
+            return None
+        e = self.log[i]
+        return Question(
+            text=e.text, options=tuple(str(o) for o in e.data.get("options") or ()),
+            multi=bool(e.data.get("multi")), at=e.at, by=e.by,
+        )
+
+    def latest_answer(self) -> Answer | None:
+        """The answer to the latest question (None while it is still open, or when nothing was asked)."""
+        i = self._latest_question_index()
+        if i is None:
+            return None
+        for e in reversed(self.log[i + 1:]):
+            if e.kind == "answer":
+                return Answer(
+                    choices=tuple(str(c) for c in e.data.get("choices") or ()), text=str(e.data.get("text") or ""),
+                    question=self.log[i].text, at=e.at, by=e.by,
+                )
+        return None
 
     @classmethod
     def from_dict(cls, d: dict) -> "Item":

@@ -19,6 +19,8 @@ from .model import (
     Board,
     Item,
     LogEntry,
+    MAX_OPTIONS,
+    MIN_OPTIONS,
     normalize_priority,
     normalize_status,
     normalize_type,
@@ -89,8 +91,8 @@ def _require(board: Board, item_id: int) -> Item:
     return item
 
 
-def _log(item: Item, actor: str, kind: str, text: str) -> None:
-    item.log.append(LogEntry(at=now_iso(), by=actor, kind=kind, text=text))
+def _log(item: Item, actor: str, kind: str, text: str, data: dict[str, Any] | None = None) -> None:
+    item.log.append(LogEntry(at=now_iso(), by=actor, kind=kind, text=text, data=data or {}))
 
 
 def _touch(item: Item, actor: str) -> None:
@@ -180,6 +182,9 @@ def item_json(item: Item) -> dict[str, Any]:
     """Stable JSON shape for CLI output."""
     d = item.to_dict()
     d["ref"] = item.ref
+    q, a = item.open_question(), item.latest_answer()
+    d["question"] = q.to_dict() if q else None  # open: waiting for the user
+    d["answer"] = a.to_dict() if a else None  # the user's reply to the latest question
     return d
 
 
@@ -422,6 +427,65 @@ def note(store: BoardStore, item_id: int, text: str, *, actor: str = "user") -> 
         return Change("note", before, _snapshot(item))
 
 
+def ask(
+    store: BoardStore, item_id: int, question: str, options: list[str], multi: bool = False, *, actor: str = "agent",
+) -> Change:
+    """Put a multiple-choice question to the user, logged on the item. Asking again replaces an open question."""
+    _check_actor(actor)
+    question = question.strip()
+    if not question:
+        raise InvalidOperation("question must not be empty")
+    opts = [str(o).strip() for o in options]
+    if not MIN_OPTIONS <= len(opts) <= MAX_OPTIONS:
+        raise InvalidOperation(f"give {MIN_OPTIONS}-{MAX_OPTIONS} options (--option, repeated), got {len(opts)}")
+    if not all(opts):
+        raise InvalidOperation("options must not be empty")
+    if len(set(opts)) != len(opts):
+        raise InvalidOperation("options must be distinct")
+    with store.transaction() as board:
+        item = _require(board, item_id)
+        _reserved(item, actor)
+        before = _snapshot(item)
+        _log(item, actor, "question", question, {"options": opts, "multi": bool(multi)})
+        _touch(item, actor)
+        return Change("ask", before, _snapshot(item))
+
+
+def answer(store: BoardStore, item_id: int, choices: list[str], text: str = "", *, actor: str = "user") -> Change:
+    """Record the user's reply to the item's open question: options picked and/or free text ("Other")."""
+    _check_actor(actor)
+    if actor == "agent":
+        raise PermissionDenied(
+            "answering is the user's job; agents may not answer their own questions "
+            f"(wait for the reply with `triage ask {item_id} ... --wait`, or read it with `triage show {item_id}`)"
+        )
+    text = text.strip()
+    with store.transaction() as board:
+        item = _require(board, item_id)
+        q = item.open_question()
+        if q is None:
+            raise InvalidOperation(f"{item.ref} has no open question")
+        picked: list[str] = []
+        for c in choices:
+            match = next((o for o in q.options if o == c), None) or next(
+                (o for o in q.options if o.casefold() == str(c).strip().casefold()), None
+            )
+            if match is None:
+                raise InvalidOperation(f"{c!r} is not one of the options: {', '.join(q.options)}")
+            if match not in picked:
+                picked.append(match)
+        picked.sort(key=q.options.index)
+        if not picked and not text:
+            raise InvalidOperation("answer with at least one option, or some text")
+        if len(picked) > 1 and not q.multi:
+            raise InvalidOperation("this question takes one option, not several")
+        before = _snapshot(item)
+        reply = ", ".join(picked + ([f"other: {text}"] if text else []))
+        _log(item, actor, "answer", reply, {"choices": picked, "text": text})
+        _touch(item, actor)
+        return Change("answer", before, _snapshot(item))
+
+
 def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user") -> Change:
     """Move an item ``delta`` places within its status column (+ = down).
 
@@ -499,6 +563,17 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             if change.before.priority != change.after.priority and current.priority == change.after.priority:
                 current.priority = change.before.priority  # the band it adopted goes back too
             _drop_logged_by(current, change)
+            return Change("revert", before, _snapshot(current))
+        if change.op == "answer":  # only the log changed: take the reply back, which reopens the question
+            current = board.get(change.item.id)
+            if current is None:
+                raise NotFound(f"#{change.item.id} no longer exists")
+            added = change.after.log[len(change.before.log):]  # type: ignore[union-attr]
+            if not added or added[-1] not in current.log:
+                raise InvalidOperation(f"{current.ref}'s answer was already changed; nothing to undo")
+            before = _snapshot(current)
+            _drop_logged_by(current, change)
+            _touch(current, actor)
             return Change("revert", before, _snapshot(current))
         if change.before is None:  # undo add
             item = board.get(change.after.id)  # type: ignore[union-attr]

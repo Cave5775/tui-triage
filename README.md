@@ -80,7 +80,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `a` | quick add, one line (see the tokens below) |
 | `A` | full form with a description field (`Ctrl+S` saves) |
 | `e` / `E` | edit the item in the form / edit its description in your own editor (`$EDITOR`) |
-| `c` | add a note, e.g. to answer the agent's question |
+| `c` | add a note, e.g. to reply to the agent |
 
 **Triaging**
 
@@ -89,6 +89,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `Space` / `Backspace` | move one step forward / back along the flow |
 | `m` then `i` `t` `d` `r` `x` | move straight to Inbox / Todo / Doing / Review / Done |
 | `y` / `n` | in Review: accept / send back with a reason |
+| `r` | answer the agent's question (only on items marked `?`) |
 | `p` then `1`–`4`, or `+` `-` | set the priority, or raise / lower it |
 | `t` / `T` | cycle the type (feature, fix, change, chore, idea) |
 | `J` / `K` | move the item down / up in the list (priority sort only) |
@@ -98,7 +99,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 
 **App:** `,` settings · `?` help · `q` quit
 
-The item keys (`e`, `c`, `Space`, `m`, `p`, `y`, `n`, `u`, `d d`, ...) work the same while the detail pane has focus, and act on the selected item. In the detail pane `j`/`k` scroll instead of moving through the list.
+The item keys (`e`, `c`, `Space`, `m`, `p`, `y`, `n`, `r`, `u`, `d d`, ...) work the same while the detail pane has focus, and act on the selected item. In the detail pane `j`/`k` scroll instead of moving through the list.
 
 ### Customising keys
 
@@ -153,6 +154,7 @@ triage done 12 --summary "Fixed the redirect loop, added a regression test"   # 
 
 The agent also files things it notices but shouldn't fix right now (`triage add ... --type fix`), so side quests don't creep into the current change.
 If you send an item back with `n`, your reason is logged as `bounced: …`, and the agent reads it before trying again.
+When the agent needs a decision it asks you (`triage ask 12 "Which cache?" --option Redis --option SQLite --wait`): the item gets a `?` in the list and the question appears in the detail pane. Press `r`, pick an option with `j`/`k` and `Enter` (or its number; `Space` ticks several when the agent allows more than one), or choose **Other** to type your own answer. The agent reads it from the command's output, or later with `triage show`.
 
 It works the same from git worktrees: an agent in `.claude/worktrees/feature-x` sees the same board as the main checkout.
 
@@ -224,6 +226,8 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | `triage release ID [--note T]` | give up a claim (→ Todo) |
 | `triage tag ID none\|agent\|user` | set who has taken an item; `user` keeps the agent off it (you only: add `--as user`) |
 | `triage note ID TEXT` | add a note |
+| `triage ask ID QUESTION --option A --option B [--multi] [--wait [SECONDS]]` | ask the user a question with 2-6 options; `--wait` prints the answer (waits until answered, or for SECONDS; an unanswered question stays open and `show` exposes it) |
+| `triage answer ID [--choice A]... [--text T]` | answer an open question (you only: add `--as user`) |
 | `triage done ID [--summary T]` | finish (→ Review, or Done if configured) |
 | `triage accept ID` / `triage bounce ID REASON` | review decisions (you only: add `--as user`) |
 | `triage add TITLE [--type T] [--priority N] [--status S] [--body T \| --body-file F \| --body -]` | add an item |
@@ -243,7 +247,7 @@ Exit codes: `0` ok, `1` error (the reason is on stderr, or in the JSON), `2` wro
 ```sh
 git clone https://github.com/Cave5775/tui-triage && cd tui-triage
 pip install -e .[dev]
-python -m pytest -q        # about 270 tests, about 2 minutes (the TUI tests wait on live polling)
+python -m pytest -q        # about 330 tests, about 3 minutes (the TUI tests wait on live polling)
 ```
 
 The code is split into a small core that every change goes through (`triage/ops.py`, `store.py`, `config.py`, `model.py`, `paths.py`), plus two front ends: `triage/cli.py` and `triage/tui/`. `docs/CONTRACT.md` describes the core API. The TUI's keymap is defined once in `triage/tui/keys.py` (named commands with default keys, and the hint lists for each context). It drives the key bindings, the bottom bar, the `?` help screen and `triage config init|keys`, and the `[keys]` table in `config.toml` is overlaid on it at startup.
