@@ -78,7 +78,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `a` | quick add, one line (see the tokens below) |
 | `A` | full form with a description field (`Ctrl+S` saves) |
 | `e` / `E` | edit the item in the form / edit its description in your own editor (`$EDITOR`) |
-| `c` | add a note, e.g. to answer the agent's question |
+| `c` | add a note, e.g. to reply to the agent |
 
 **Triaging**
 
@@ -87,6 +87,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 | `Space` / `Backspace` | move one step forward / back along the flow |
 | `m` then `i` `t` `d` `r` `x` | move straight to Inbox / Todo / Doing / Review / Done |
 | `y` / `n` | in Review: accept / send back with a reason |
+| `r` | answer the agent's question (only on items marked `?`) |
 | `p` then `1`–`4`, or `+` `-` | set the priority, or raise / lower it |
 | `t` / `T` | cycle the type (feature, fix, change, chore, idea) |
 | `J` / `K` | move the item down / up in the list (priority sort only) |
@@ -96,7 +97,7 @@ The design rules: frequent actions are single keys; holding Shift does the bigge
 
 **App:** `,` settings · `?` help · `q` quit
 
-The item keys (`e`, `c`, `Space`, `m`, `p`, `y`, `n`, `u`, `d d`, ...) work the same while the detail pane has focus, and act on the selected item. In the detail pane `j`/`k` scroll instead of moving through the list.
+The item keys (`e`, `c`, `Space`, `m`, `p`, `y`, `n`, `r`, `u`, `d d`, ...) work the same while the detail pane has focus, and act on the selected item. In the detail pane `j`/`k` scroll instead of moving through the list.
 
 ### Customising keys
 
@@ -151,6 +152,7 @@ triage done 12 --summary "Fixed the redirect loop, added a regression test"   # 
 
 The agent also files things it notices but shouldn't fix right now (`triage add ... --type fix`), so side quests don't creep into the current change.
 If you send an item back with `n`, your reason is logged as `bounced: …`, and the agent reads it before trying again.
+When the agent needs a decision it asks you (`triage ask 12 "Which cache?" --option Redis --option SQLite --wait`): the item gets a `?` in the list and the question appears in the detail pane. Press `r`, pick an option with `j`/`k` and `Enter` (or its number; `Space` ticks several when the agent allows more than one), or choose **Other** to type your own answer. The agent reads it from the command's output, or later with `triage show`.
 
 It works the same from git worktrees: an agent in `.claude/worktrees/feature-x` sees the same board as the main checkout.
 
@@ -221,6 +223,8 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | `triage claim [ID]` | start work (→ Doing); without an ID, claims the next item |
 | `triage release ID [--note T]` | give up a claim (→ Todo) |
 | `triage note ID TEXT` | add a note |
+| `triage ask ID QUESTION --option A --option B [--multi] [--wait [SECONDS]]` | ask the user a question with 2-6 options; `--wait` prints the answer (waits until answered, or for SECONDS; an unanswered question stays open and `show` exposes it) |
+| `triage answer ID [--choice A]... [--text T]` | answer an open question (you only: add `--as user`) |
 | `triage done ID [--summary T]` | finish (→ Review, or Done if configured) |
 | `triage accept ID` / `triage bounce ID REASON` | review decisions (you only: add `--as user`) |
 | `triage add TITLE [--type T] [--priority N] [--status S] [--body T \| --body-file F \| --body -]` | add an item |

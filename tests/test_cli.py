@@ -454,3 +454,94 @@ def test_list_sort_is_one_list_across_statuses(run, store):
     assert [i["id"] for i in jrun(run, "list", "--sort", "created")] == [2, 3, 1]
     assert [i["id"] for i in jrun(run, "list", "--sort", "oldest", "--status", "todo")] == [1, 3]
     assert run("list", "--sort", "nope")[0] != 0
+
+
+def test_ask_then_show_exposes_the_open_question(run):
+    jrun(run, "add", "pick a cache", "--status", "todo")
+    asked = jrun(run, "ask", "1", "Which", "cache?", "--option", "Redis", "--option", "SQLite")
+    assert asked == {"id": 1, "answered": False, "answer": None,
+                     "question": {"text": "Which cache?", "options": ["Redis", "SQLite"], "multi": False}}
+    shown = jrun(run, "show", "1")
+    assert shown["question"]["text"] == "Which cache?" and shown["question"]["options"] == ["Redis", "SQLite"]
+    assert shown["answer"] is None and shown["log"][-1]["kind"] == "question"
+    code, out, _ = run("show", "1")
+    assert code == 0 and "Open question (pick one): Which cache?" in out and "1. Redis" in out and "2. SQLite" in out
+    code, out, _ = run("ask", "1", "again?", "--option", "a", "--option", "b")
+    assert code == 0 and "asked #1: again?" in out
+    assert jrun(run, "show", "1")["question"]["text"] == "again?"  # replaced
+
+
+def test_answer_then_show_exposes_the_answer(run):
+    jrun(run, "add", "pick", "--status", "todo")
+    jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--option", "c", "--multi")
+    code, _, err = run("answer", "1", "--choice", "a")  # the default actor is the agent
+    assert code == 1 and "user" in err
+    done = jrun(run, "answer", "1", "--choice", "c", "--choice", "a", "--text", "and d", "--as", "user")
+    assert done["question"] is None
+    assert done["answer"]["choices"] == ["a", "c"] and done["answer"]["text"] == "and d"
+    assert done["answer"]["question"] == "Which?" and done["answer"]["by"] == "user"
+    shown = jrun(run, "show", "1")
+    assert shown["answer"] == done["answer"] and shown["log"][-1]["kind"] == "answer"
+    code, out, _ = run("show", "1")
+    assert "Question: Which?" in out and "Answer (user): a, c, other: and d" in out
+    code, out, err = run("answer", "1", "--choice", "a", "--as", "user")
+    assert code == 1 and "no open question" in err
+
+
+@pytest.mark.parametrize("args", [
+    ("--option", "only"), (), ("--option", "a", "--option", "a"),
+    tuple(x for o in "abcdefg" for x in ("--option", o)),
+])
+def test_ask_rejects_bad_options(run, args):
+    jrun(run, "add", "x")
+    code, out, _ = run("ask", "1", "q?", *args, "--json")
+    assert code == 1 and "error" in json.loads(out)
+    assert jrun(run, "show", "1")["question"] is None
+
+
+def test_ask_wait_returns_the_answer(run, repo, monkeypatch):
+    import threading
+    import time
+
+    from triage import cli, ops
+
+    jrun(run, "add", "x")
+    monkeypatch.setattr(cli, "WAIT_POLL_SECONDS", 0.05)
+
+    def reply():
+        st = ops.open_store(repo)
+        while ops.get(st, 1).open_question() is None:  # the question is not logged yet
+            time.sleep(0.02)
+        ops.answer(st, 1, ["b"], "")
+
+    t = threading.Thread(target=reply)
+    t.start()
+    try:
+        got = jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "20")
+    finally:
+        t.join()
+    assert got["answered"] is True and got["answer"]["choices"] == ["b"] and got["answer"]["by"] == "user"
+
+    t = threading.Thread(target=reply)
+    t.start()  # a bare --wait waits until the answer arrives; text output names the choice
+    try:
+        code, out, _ = run("ask", "1", "Again?", "--option", "a", "--option", "b", "--wait")
+    finally:
+        t.join()
+    assert code == 0 and out.strip() == "#1 answered by user: b"
+
+
+def test_ask_wait_times_out_and_leaves_the_question_open(run, monkeypatch):
+    from triage import cli
+
+    monkeypatch.setattr(cli, "WAIT_POLL_SECONDS", 0.05)
+    jrun(run, "add", "x")
+    got = jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0.2")
+    assert got["answered"] is False and got["answer"] is None
+    code, out, _ = run("ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0")
+    assert code == 0 and "no answer yet" in out and "triage show 1" in out
+    assert jrun(run, "show", "1")["question"]["text"] == "Which?"
+
+
+def test_skill_mentions_asking():
+    assert "triage ask" in skill.SKILL_MD and "--wait" in skill.SKILL_MD

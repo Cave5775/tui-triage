@@ -204,3 +204,97 @@ def test_sorted_items_by_each_sort(store):
                      "oldest": [c, a, b], "number": [a, b, c]}
     with pytest.raises(ValueError):
         board.sorted_items("todo", "nope")
+
+
+# ---- questions and answers ---------------------------------------------------
+
+def test_ask_logs_a_question_and_opens_it(store):
+    item = ops.add(store, "x", status="todo").after
+    assert item.open_question() is None and item.latest_answer() is None
+    c = ops.ask(store, item.id, "  Which cache?  ", [" Redis", "SQLite "], multi=True)
+    q = c.after.open_question()
+    assert (q.text, q.options, q.multi, q.by) == ("Which cache?", ("Redis", "SQLite"), True, "agent")
+    assert c.after.log[-1].kind == "question" and c.after.updated_by == "agent"
+    assert c.after.latest_answer() is None
+
+
+def test_ask_validates(store):
+    item = ops.add(store, "x").after
+    for question, options in (("", ["a", "b"]), ("  ", ["a", "b"]), ("q", ["only"]), ("q", []),
+                              ("q", list("abcdefg")), ("q", ["a", " "]), ("q", ["a", "a"])):
+        with pytest.raises(InvalidOperation):
+            ops.ask(store, item.id, question, options)
+    with pytest.raises(NotFound):
+        ops.ask(store, 99, "q", ["a", "b"])
+    assert ops.ask(store, item.id, "q", list("abcdef")).after.open_question().options == tuple("abcdef")
+    assert len(store.load().get(item.id).log) == 2  # only the valid ask was logged
+
+
+def test_answer_closes_the_question_and_records_the_reply(store):
+    item = ops.add(store, "x").after
+    ops.ask(store, item.id, "Which?", ["Redis", "SQLite", "Memory"], multi=True)
+    c = ops.answer(store, item.id, ["memory", "Redis"], "or a file")  # case-insensitive, stored in option order
+    assert c.after.open_question() is None
+    a = c.after.latest_answer()
+    assert (a.choices, a.text, a.question, a.by) == (("Redis", "Memory"), "or a file", "Which?", "user")
+    assert c.after.log[-1].kind == "answer" and c.after.log[-1].text == "Redis, Memory, other: or a file"
+    assert c.after.updated_by == "user"
+
+
+def test_answer_free_text_alone_and_validation(store):
+    item = ops.add(store, "x").after
+    with pytest.raises(InvalidOperation):
+        ops.answer(store, item.id, ["a"])  # nothing asked
+    ops.ask(store, item.id, "Which?", ["a", "b"])
+    for choices, text in (([], ""), (["c"], ""), (["a", "b"], "")):  # empty, unknown, two for a single choice
+        with pytest.raises(InvalidOperation):
+            ops.answer(store, item.id, choices, text)
+    assert store.load().get(item.id).open_question() is not None
+    a = ops.answer(store, item.id, [], "neither").after.latest_answer()
+    assert (a.choices, a.text) == ((), "neither")
+    with pytest.raises(InvalidOperation):
+        ops.answer(store, item.id, ["a"])  # already answered
+
+
+def test_agents_cannot_answer_their_own_questions(store):
+    item = ops.add(store, "x").after
+    ops.ask(store, item.id, "Which?", ["a", "b"])
+    with pytest.raises(PermissionDenied):
+        ops.answer(store, item.id, ["a"], actor="agent")
+    assert store.load().get(item.id).open_question() is not None
+
+
+def test_asking_again_replaces_the_open_question(store):
+    item = ops.add(store, "x").after
+    ops.ask(store, item.id, "first?", ["a", "b"])
+    ops.ask(store, item.id, "second?", ["c", "d"])
+    assert store.load().get(item.id).open_question().text == "second?"
+    ops.answer(store, item.id, ["c"])
+    after = store.load().get(item.id)
+    assert after.open_question() is None and after.latest_answer().question == "second?"
+    ops.ask(store, item.id, "third?", ["e", "f"])  # a new question hides the old answer
+    again = store.load().get(item.id)
+    assert again.open_question().text == "third?" and again.latest_answer() is None
+
+
+def test_questions_survive_the_board_file_and_old_files_load(store):
+    item = ops.add(store, "x").after
+    ops.ask(store, item.id, "Which?", ["a", "b"])
+    reloaded = store.load().get(item.id)
+    assert reloaded.log[-1].data == {"options": ["a", "b"], "multi": False}
+    assert "data" not in reloaded.to_dict()["log"][0]  # plain entries stay as they were
+    from triage.model import Item
+    old = Item.from_dict({"id": 1, "title": "t", "log": [{"at": "x", "by": "user", "kind": "note", "text": "hi"}]})
+    assert old.open_question() is None and old.log[0].data == {}
+
+
+def test_undo_answer_reopens_the_question(store):
+    item = ops.add(store, "x").after
+    ops.ask(store, item.id, "Which?", ["a", "b"])
+    answered = ops.answer(store, item.id, ["a"])
+    ops.note(store, item.id, "agent note", actor="agent")
+    undone = ops.revert(store, answered).after
+    assert undone.open_question().text == "Which?" and undone.latest_answer() is None
+    assert [e.kind for e in undone.log][-2:] == ["question", "note"]  # the note written meanwhile stays
+    with pytest.raises(InvalidOperation):
+        ops.revert(store, answered)  # already gone

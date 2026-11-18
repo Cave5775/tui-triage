@@ -18,7 +18,7 @@ from triage.store import BoardStore
 from triage.tui import keys
 from triage.tui.app import TriageApp, edit_text_externally, resolve_editor
 from triage.tui.quickadd import parse_quick_add
-from triage.tui.screens import HelpScreen, RepoPickerScreen, SettingsScreen, fuzzy_score
+from triage.tui.screens import AnswerScreen, HelpScreen, RepoPickerScreen, SettingsScreen, fuzzy_score
 from triage.tui.widgets import KeyHints
 
 SIZE = (120, 40)
@@ -1486,3 +1486,189 @@ async def test_ui_sort_setting_is_the_initial_order(store):
         await pilot.press("2")
         await settle(pilot)
         assert ids(app) == [b, a] and app.sort == "created"
+
+
+# ---- agent questions ---------------------------------------------------------------------------
+
+def ask_one(store, options=("Redis", "SQLite"), multi=False, status="inbox"):
+    [a] = seed(store, ("pick a cache", status, 3))
+    ops.ask(store, a, "Which cache should we use?", list(options), multi=multi)
+    return a
+
+
+async def test_answer_key_is_live_only_with_an_open_question(store):
+    [a] = seed(store, ("plain", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.check_action("answer", ()) is False and ("r", "answer") not in hints(app)
+        await pilot.press("r")
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+        ops.ask(store, a, "Which?", ["x", "y"])
+        app.reload()
+        await settle(pilot)
+        assert app.check_action("answer", ()) is True and hints(app)[0] == ("r", "answer")
+        ops.answer(store, a, ["x"])
+        app.reload()
+        await settle(pilot)
+        assert app.check_action("answer", ()) is False and ("r", "answer") not in hints(app)
+
+
+async def test_open_question_is_marked_in_the_row_and_shown_in_the_detail(store):
+    a = ask_one(store)
+    seed(store, ("quiet", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        rows = {i: t.plain for i, t in app.items_view._rows}
+        assert " ? " in rows[a] + " " and "?" not in rows[a + 1]
+        from rich.console import Console
+        from triage.tui.widgets import palette, render_detail
+        con = Console(file=io.StringIO(), width=80, record=True, force_terminal=True, color_system="truecolor")
+        con.print(render_detail(app.current_item(), palette(app)))
+        out = con.export_text()
+        assert "Which cache should we use?" in out and "1  Redis" in out and "2  SQLite" in out
+        assert "Other" in out and "press r to answer" in out
+        assert "Which cache should we use?" in app.detail._shown[0]  # and the live pane shows it too
+
+
+async def test_r_opens_the_modal_and_a_number_picks_a_single_option(store):
+    a = ask_one(store)
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r")
+        await settle(pilot)
+        assert isinstance(app.screen, AnswerScreen)
+        await pilot.press("2")  # SQLite, answered at once
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+        assert app.message.startswith("answered #1") and "u to undo" in app.message
+        item = store.load().get(a)
+        assert item.open_question() is None and item.latest_answer().choices == ("SQLite",)
+        assert item.log[-1].by == "user" and ("r", "answer") not in hints(app)
+        await pilot.press("u")  # an answer is undoable like other user changes
+        await settle(pilot)
+        assert store.load().get(a).open_question() is not None
+
+
+async def test_arrow_keys_and_enter_pick_the_highlighted_option(store):
+    a = ask_one(store, options=("one", "two", "three"))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r", "j", "j", "k", "enter")  # one -> two -> three -> two
+        await settle(pilot)
+        assert store.load().get(a).latest_answer().choices == ("two",)
+
+
+async def test_multi_select_toggles_with_space_and_numbers_and_enter_submits(store):
+    a = ask_one(store, options=("one", "two", "three"), multi=True)
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r", "space", "j", "j", "space", "2", "2", "3")  # 1 on, 3 on, 2 on then off, 3 off
+        await settle(pilot)
+        assert isinstance(app.screen, AnswerScreen) and app.screen._checked == {0}  # numbers did not submit
+        await pilot.press("3", "enter")
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+    assert store.load().get(a).latest_answer().choices == ("one", "three")
+
+
+async def test_multi_select_enter_with_nothing_ticked_takes_the_highlighted_option(store):
+    a = ask_one(store, options=("one", "two"), multi=True)
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r", "j", "enter")
+        await settle(pilot)
+    assert store.load().get(a).latest_answer().choices == ("two",)
+
+
+async def test_other_entry_takes_a_typed_answer(store):
+    a = ask_one(store)
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r", "3")  # the row after the options: Other
+        await settle(pilot)
+        assert app.screen.focused is app.screen.query_one("#answer-input")
+        await pilot.press("enter")  # empty: refused, still open
+        await settle(pilot)
+        assert isinstance(app.screen, AnswerScreen)
+        await pilot.press(*typed("a file, j and k"), "enter")  # j/k/numbers are plain text in the input
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+    answer = store.load().get(a).latest_answer()
+    assert answer.choices == () and answer.text == "a file, j and k"
+
+
+async def test_other_with_ticked_options_in_multi_mode_and_arrows_leave_the_input(store):
+    a = ask_one(store, options=("one", "two"), multi=True)
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r", "2", "3", *typed("plus this"))
+        await pilot.press("up")  # back to the list (on the last option)
+        await settle(pilot)
+        assert app.screen.focused is None
+        await pilot.press("down", "enter")  # the Other row again: focus the input, text kept
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+    answer = store.load().get(a).latest_answer()
+    assert answer.choices == ("two",) and answer.text == "plus this"
+
+
+async def test_escape_cancels_the_answer_modal(store):
+    a = ask_one(store)
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("r", "3", *typed("never mind"), "escape")
+        await settle(pilot)
+        assert not isinstance(app.screen, ModalScreen)
+    assert store.load().get(a).open_question() is not None
+
+
+async def test_answer_works_from_the_detail_pane_and_in_review(store):
+    a = ask_one(store, status="review")
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("4")
+        await settle(pilot)
+        assert hints(app)[:3] == [("r", "answer"), ("y", "accept"), ("n", "bounce")]
+        await pilot.press("tab")
+        await settle(pilot)
+        assert app.focused is app.detail and hints(app)[0] == ("r", "answer")
+        await pilot.press("r", "1")
+        await settle(pilot)
+    assert store.load().get(a).latest_answer().choices == ("Redis",)
+
+
+async def test_new_agent_question_is_announced_while_the_board_is_open(store):
+    config.set_value("ui.poll_seconds", 0.1)
+    [a] = seed(store, ("task", "inbox", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        ops.ask(store, a, "Which?", ["x", "y"])  # an outside write
+        await pilot.pause(0.6)
+        assert app.message == "agent asked a question on #1 — r to answer"
+        assert app.check_action("answer", ()) is True
+
+
+async def test_answer_key_can_be_rebound(store):
+    ask_one(store)
+    km = keys.build_keymap({"answer": "ctrl+r"})
+    assert km.keys_for("answer") == ("ctrl+r",) and not km.problems
+    app = TriageApp(store, keymap=km)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert hints(app)[0] == ("ctrl+r", "answer")
+        await pilot.press("ctrl+r")
+        await settle(pilot)
+        assert isinstance(app.screen, AnswerScreen)

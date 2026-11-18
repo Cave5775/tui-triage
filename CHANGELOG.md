@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+- Agents can ask a multiple-choice question: `triage ask ID "question" --option A --option B [--multi] [--wait]`. The item shows a `?` in the list, the question appears in the detail pane, and `r` opens an answer dialog (pick an option, tick several, or type your own answer). `triage show` returns the open question and the latest answer.
+
 ## [0.1.1] - 2026-11-15
 
 First public release on PyPI.

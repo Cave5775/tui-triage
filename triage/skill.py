@@ -28,7 +28,7 @@ Item numbers, titles and the board itself (`#9`, "triage item 9", "per the board
 
 ## Stuck or out of scope
 
-- Unclear or blocked: `triage note ID "Question: ..."`, then keep the claim or `triage release ID --note "why"`. Never guess the user's intent.
+- Unclear or blocked: never guess the user's intent. Need a decision? `triage ask ID "question" --option A --option B --wait` (2-6 options, `--multi` for several) prints the user's answer (`--wait 300` limits the wait; an unanswered question stays open: read it later with `triage show ID`). Otherwise `triage note ID "Question: ..."`, then keep the claim or `triage release ID --note "why"`.
 - Unrelated work you notice: file it, don't do it: `triage add "title" --type fix --priority 3 --body "what, where, how to reproduce"`. Types: feature fix change chore idea. Priority: 1 urgent .. 4 low. Long body: `--body-file PATH` or `--body -` (stdin).
 
 ## Permissions

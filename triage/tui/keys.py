@@ -89,6 +89,7 @@ COMMANDS: tuple[Command, ...] = (
     _c("retreat", "backspace", "Triage", "Move to the previous status", "retreat"),
     _c("move", "m", "Triage", "Move the item to a status (then i/t/d/r/x)", "chord('move')"),
     _c("accept", "y", "Triage", "Accept (Review only): move to Done", ("accept", "accept_hint")),
+    _c("answer", "r", "Triage", "Answer the agent's question (only when the item has one)", "answer"),
     _c("bounce", "n", "Triage", "Bounce with a reason: back to Todo, logged for the agent", "bounce"),
     _c("priority", "p", "Triage", "Set the priority (then 1-4)", "chord('priority')"),
     _c("prio_up", "plus,equals_sign", "Triage", "Raise priority (lower number)", "prio_up"),
@@ -420,9 +421,15 @@ LIST_CONTEXTS = ("empty", "item", "review", "archived")
 
 def hint_entries(
     context: str, keymap: Keymap, *, dest: str | None = None, can_undo: bool = False, filter_active: bool = False,
+    question: bool = False,
 ) -> list[tuple[str, str]]:
-    """``(key text, label)`` pairs for a context, using the effective keys."""
+    """``(key text, label)`` pairs for a context, using the effective keys.
+
+    ``question``: the selected item has an open question, so answering leads the bar (like accept in Review).
+    """
     hints = HINT_CONTEXTS[context]
+    if question and context in ("item", "review", "detail"):
+        hints = (_h("answer", "answer"), *hints)
     if filter_active and context in LIST_CONTEXTS:
         hints = (_h("back", "clear filter"), *hints)
     out: list[tuple[str, str]] = []
