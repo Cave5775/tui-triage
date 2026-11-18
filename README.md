@@ -46,10 +46,12 @@ Press `?` at any time for the full list of keys. It starts with the keys that ma
 
 - **Inbox:** quick captures that haven't been thought through yet. Agents don't take work from here (unless you allow it).
 - **Todo:** approved and ready. This is the agent's queue, ordered by priority, then by your manual order.
-- **Doing:** someone is working on it. The item shows who claimed it.
+- **Doing:** someone is working on it. The item shows who has taken it.
 - **Review:** the agent says it's finished. You decide: accept (`y`) or send back (`n`).
 - **Done:** accepted.
 - **Archived** (tab `9`): soft-deleted items. You can restore them with `Space`.
+
+Any item can carry one **taken by** tag, shown after its title: `agent` (or the agent's name) when the agent has taken it, `user` when you reserve it. An item tagged `user` is off limits to the agent: every `triage` command that would change it is refused, and `triage next` skips it. Switch the tag between none, agent and user in the edit form (`e`, the "taken by" field) or with `triage tag ID none|agent|user --as user`. Setting it to none on an item in Doing only drops the tag; the status stays.
 
 Every item keeps an **activity log**: status changes, edits, your notes and the agent's notes and summaries, each marked with who wrote it. Notes are how you and the agent talk about an item. Press `c` to add one.
 
@@ -220,6 +222,7 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | `triage next` | the item an agent should pick up next (doesn't claim it) |
 | `triage claim [ID]` | start work (→ Doing); without an ID, claims the next item |
 | `triage release ID [--note T]` | give up a claim (→ Todo) |
+| `triage tag ID none\|agent\|user` | set who has taken an item; `user` keeps the agent off it (you only: add `--as user`) |
 | `triage note ID TEXT` | add a note |
 | `triage done ID [--summary T]` | finish (→ Review, or Done if configured) |
 | `triage accept ID` / `triage bounce ID REASON` | review decisions (you only: add `--as user`) |

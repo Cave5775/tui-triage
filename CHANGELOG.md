@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- The agent flag is now a "taken by" tag shown as plain text (`agent`, the agent's name, or `user`) instead of a flag symbol. The edit form switches it between none, agent and user, and an item tagged `user` is refused for every agent command (`triage next` skips it). New `triage tag ID none|agent|user` for the user.
+
 ## [0.1.1] - 2026-11-15
 
 First public release on PyPI.

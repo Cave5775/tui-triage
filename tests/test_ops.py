@@ -204,3 +204,111 @@ def test_sorted_items_by_each_sort(store):
                      "oldest": [c, a, b], "number": [a, b, c]}
     with pytest.raises(ValueError):
         board.sorted_items("todo", "nope")
+
+
+# ---- taken-by tag (none / agent / user) -------------------------------------------------
+
+def _tagged_user(store, status="todo"):
+    item = ops.add(store, "mine", status=status).after
+    return ops.update(store, item.id, taken_by="user").after
+
+
+def test_user_sets_tag_logs_it_and_undo_restores(store):
+    item = ops.add(store, "x", status="todo").after
+    c = ops.update(store, item.id, taken_by="user")
+    assert c.after.claimed_by == "user" and c.after.status == "todo"
+    assert c.after.log[-1].text == "taken by: none -> user" and c.after.log[-1].by == "user"
+    c2 = ops.update(store, item.id, taken_by="agent", title="renamed")
+    assert c2.after.claimed_by == "agent"
+    assert c2.after.log[-1].text == "title, taken by: user -> agent"
+    assert not ops.update(store, item.id, taken_by="agent").changed  # same tag: nothing to do
+    ops.revert(store, c2)
+    assert ops.get(store, item.id).claimed_by == "user"
+    ops.revert(store, c)
+    back = ops.get(store, item.id)
+    assert back.claimed_by is None and len(back.log) == 1
+
+
+def test_none_on_a_doing_item_only_drops_the_tag(store):
+    item = ops.add(store, "x", status="todo").after
+    ops.claim(store, item.id, actor="agent")
+    c = ops.update(store, item.id, taken_by="none")
+    assert (c.after.status, c.after.claimed_by) == ("doing", None)
+    assert c.after.log[-1].text == "taken by: agent -> none"
+
+
+def test_custom_agent_name_is_kept_and_logged(store):
+    item = ops.add(store, "x", status="todo").after
+    ops.claim(store, item.id, actor="agent", who="worker-7")
+    c = ops.update(store, item.id, taken_by="user")
+    assert c.after.log[-1].text == "taken by: worker-7 -> user"
+
+
+def test_add_with_tag_and_agent_cannot_tag(store):
+    c = ops.add(store, "reserved", taken_by="user")
+    assert c.after.claimed_by == "user" and "taken by user" in c.after.log[0].text
+    assert ops.add(store, "plain", taken_by="none").after.claimed_by is None
+    with pytest.raises(PermissionDenied):
+        ops.add(store, "sneaky", actor="agent", taken_by="agent")
+    other = ops.add(store, "y", status="todo").after
+    with pytest.raises(PermissionDenied):
+        ops.update(store, other.id, actor="agent", taken_by="agent")
+    with pytest.raises(PermissionDenied):
+        ops.update(store, other.id, actor="agent", taken_by="none")
+
+
+@pytest.mark.parametrize("call", [
+    lambda s, i: ops.claim(s, i, actor="agent"),
+    lambda s, i: ops.claim(s, i, actor="agent", force=True),
+    lambda s, i: ops.claim(s, i, actor="agent", who="agent-b", force=True),
+    lambda s, i: ops.release(s, i, actor="agent"),
+    lambda s, i: ops.note(s, i, "hello", actor="agent"),
+    lambda s, i: ops.update(s, i, actor="agent", title="new"),
+    lambda s, i: ops.set_status(s, i, "review", actor="agent"),
+    lambda s, i: ops.set_status(s, i, "inbox", actor="agent"),
+    lambda s, i: ops.advance(s, i, actor="agent"),
+    lambda s, i: ops.finish(s, i, actor="agent", summary="done"),
+    lambda s, i: ops.reorder(s, i, 1, actor="agent"),
+    lambda s, i: ops.archive(s, i, actor="agent"),
+    lambda s, i: ops.purge(s, i, actor="agent"),
+])
+def test_agent_cannot_touch_user_tagged_items(store, call):
+    set_value("agent.can_edit", True, board_id=store.ref.board_id)
+    set_value("agent.can_archive", True, board_id=store.ref.board_id)
+    item = _tagged_user(store)
+    ops.add(store, "neighbour", status="todo")
+    before = ops.get(store, item.id).to_dict()
+    with pytest.raises(PermissionDenied, match="tagged `user`"):
+        call(store, item.id)
+    assert ops.get(store, item.id).to_dict() == before  # nothing was written
+
+
+def test_agent_can_still_read_and_next_skips_user_items(store):
+    mine = _tagged_user(store)
+    free = ops.add(store, "free", status="todo", priority=4).after
+    assert ops.get(store, mine.id).claimed_by == "user"
+    assert ops.next_item(store.load(), ops.config_for(store)).id == free.id
+    assert ops.claim(store, actor="agent").after.id == free.id
+    with pytest.raises(NotFound):
+        ops.claim(store, actor="agent")  # only the user's item is left
+
+
+def test_agent_may_not_claim_under_the_name_user(store):
+    item = ops.add(store, "x", status="todo").after
+    for name in ("user", "User", " user "):
+        with pytest.raises(PermissionDenied):
+            ops.claim(store, item.id, actor="agent", who=name)
+    assert ops.get(store, item.id).claimed_by is None
+
+
+def test_user_tag_survives_status_moves_and_user_can_work_on_the_item(store):
+    item = _tagged_user(store, "todo")
+    assert ops.set_status(store, item.id, "inbox").after.claimed_by == "user"
+    ch = ops.set_status(store, item.id, "todo")
+    assert ch.after.claimed_by == "user"
+    ops.revert(store, ch)
+    assert ops.get(store, item.id).claimed_by == "user"
+    assert ops.note(store, item.id, "mine", actor="user").after.log[-1].text == "mine"
+    assert ops.update(store, item.id, taken_by="none").after.claimed_by is None
+    ops.set_status(store, item.id, "todo")
+    assert ops.claim(store, item.id, actor="agent").after.claimed_by == "agent"  # free again

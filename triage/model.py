@@ -13,6 +13,8 @@ TYPES: tuple[str, ...] = ("feature", "fix", "change", "chore", "idea")
 PRIORITIES: tuple[int, ...] = (1, 2, 3, 4)  # 1 = urgent ... 4 = low
 PRIORITY_LABELS = {1: "urgent", 2: "high", 3: "normal", 4: "low"}
 ACTORS: tuple[str, ...] = ("user", "agent")
+USER_TAG = "user"  # Item.claimed_by value meaning "reserved by the user: the agent must not touch it"
+AGENT_TAG = "agent"  # the default name an agent takes an item under
 LOG_KINDS: tuple[str, ...] = ("note", "status", "edit", "summary", "create")
 
 # Aliases accepted wherever a type/status is parsed from text.

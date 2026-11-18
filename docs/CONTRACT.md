@@ -64,6 +64,7 @@ through `triage.ops`, and all config writes go through `triage.config.set_value`
 | ui.poll_seconds | 1.0 |
 
 ### `triage.ops` (all mutations; each returns `Change`)
+`Item.claimed_by` is the one "taken by" tag: `None` = none, the agent's name (default `agent`) = the agent took it, `"user"` = reserved by the user. For `actor="agent"`, every mutation of an item tagged `user` raises `PermissionDenied` (force does not help), `next_item` skips it, and the agent may not claim under the name `user`. The user's tag survives status moves.
 Errors: `TriageError` (base; print the message), `NotFound`, `PermissionDenied`, `InvalidOperation`.
 Model `ValueError`s from bad type/status/priority strings and `ConfigError` can also come through.
 Front ends should catch `(TriageError, ValueError)`.
@@ -77,8 +78,8 @@ Front ends should catch `(TriageError, ValueError)`.
 | `load(store) -> Board`, `get(store, id) -> Item` | reads |
 | `next_item(board, cfg) -> Item\|None` | unclaimed, from the pickup statuses, todo first |
 | `item_json(item) -> dict` | stable JSON shape (adds `ref`) |
-| `add(store, title, *, actor, body="", type="feature", priority=3, status=None)` | the default status comes from config, per actor |
-| `update(store, id, *, actor, title=None, body=None, type=None, priority=None)` | |
+| `add(store, title, *, actor, body="", type="feature", priority=3, status=None, taken_by=None)` | the default status comes from config, per actor; `taken_by` is user only |
+| `update(store, id, *, actor, title=None, body=None, type=None, priority=None, taken_by=None)` | `taken_by` (`none`/`agent`/a name/`user`, user only) sets `claimed_by`, logged as `taken by: a -> b`, undoable |
 | `set_status(store, id, status, *, actor, note=None)` | |
 | `advance(store, id, *, actor, step=1)` | moves along FLOW; raises `InvalidOperation` at either end |
 | `claim(store, id=None, *, actor="agent", who=None, force=False)` | → doing; `id=None` claims the next item |

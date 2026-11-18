@@ -582,7 +582,7 @@ async def test_detail_pane_shows_markdown_and_distinguishes_agent_log(store):
         con.print(render_detail(app.current_item(), palette(app)))
         out = con.export_text()
         assert "Heading" in out and "agent note here" in out and "user reply" in out
-        assert "claimed" in out or "⚑" in out
+        assert "taken by agent" in out and "⚑" not in out
         styled = con.export_text(styles=True)
         assert styled != out  # agent entries carry colour
 
@@ -683,6 +683,7 @@ async def test_add_form_creates_item(store):
         await pilot.press(*typed("Big feature"))
         await pilot.press("tab")  # type select
         await pilot.press("tab")  # priority select
+        await pilot.press("tab")  # taken by select
         await pilot.press("tab")  # body
         await settle(pilot)
         await pilot.press(*typed("body text"))
@@ -1486,3 +1487,100 @@ async def test_ui_sort_setting_is_the_initial_order(store):
         await pilot.press("2")
         await settle(pilot)
         assert ids(app) == [b, a] and app.sort == "created"
+
+
+# ---- taken-by tag -------------------------------------------------------------------
+
+async def test_rows_show_the_tag_text_without_a_flag(store):
+    from triage.tui.widgets import render_row, palette
+    a, b, c = seed(store, ("plain", "todo", 3), ("taken", "todo", 3), ("reserved", "todo", 3))
+    ops.claim(store, b, actor="agent")
+    ops.note(store, a, "touched", actor="agent")  # last updated by the agent: no badge any more
+    ops.update(store, c, taken_by="user")
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        board = store.load()
+        rows = {i: render_row(board.get(i), 60, palette(app), False) for i in (a, b, c)}
+        assert rows[a].plain.rstrip().endswith("plain")
+        assert rows[b].plain.rstrip().endswith("agent")
+        assert rows[c].plain.rstrip().endswith("user")
+        assert all("⚑" not in r.plain for r in rows.values())
+        styles = {i: {str(s.style) for s in r.spans} for i, r in rows.items()}
+        assert styles[b] != styles[c]  # the user's tag has its own colour
+
+
+async def test_edit_form_switches_taken_by_and_logs_it(store):
+    [a] = seed(store, ("thing", "todo", 3))
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2", "e")
+        await settle(pilot)
+        field = app.screen.query_one("#f-taken")
+        assert field.value == "none"
+        field.focus()
+        await pilot.press("u", "ctrl+s")  # jump to user
+        await settle(pilot)
+        assert store.load().get(a).claimed_by == "user"
+        assert store.load().get(a).log[-1].text == "taken by: none -> user"
+        await pilot.press("e")
+        await settle(pilot)
+        field = app.screen.query_one("#f-taken")
+        assert field.value == "user"
+        field.focus()
+        await pilot.press("a", "ctrl+s")
+        await settle(pilot)
+        it = store.load().get(a)
+        assert (it.claimed_by, it.status) == ("agent", "todo")
+        assert it.log[-1].text == "taken by: user -> agent"
+        await pilot.press("e")
+        await settle(pilot)
+        field = app.screen.query_one("#f-taken")
+        field.focus()
+        await pilot.press("n", "ctrl+s")
+        await settle(pilot)
+        assert store.load().get(a).claimed_by is None
+        await pilot.press("u")  # undo the last form save
+        await settle(pilot)
+        assert store.load().get(a).claimed_by == "agent"
+
+
+async def test_edit_form_keeps_a_custom_agent_name_and_drops_tag_without_moving_status(store):
+    [a] = seed(store, ("thing", "todo", 3))
+    ops.claim(store, a, actor="agent", who="worker-7")
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("3", "e")
+        await settle(pilot)
+        field = app.screen.query_one("#f-taken")
+        assert field.value == "worker-7" and field.label == "worker-7"
+        await pilot.press("end", *typed("!"), "ctrl+s")  # save without touching the field
+        await settle(pilot)
+        it = store.load().get(a)
+        assert it.claimed_by == "worker-7" and it.title == "thing!"
+        await pilot.press("e")
+        await settle(pilot)
+        field = app.screen.query_one("#f-taken")
+        field.focus()
+        await pilot.press("n", "ctrl+s")
+        await settle(pilot)
+    it = store.load().get(a)
+    assert (it.claimed_by, it.status) == (None, "doing")
+
+
+async def test_add_form_can_reserve_the_item(store):
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("A")
+        await settle(pilot)
+        await pilot.press(*typed("Mine"))
+        app.screen.query_one("#f-taken").focus()
+        await pilot.press("u", "ctrl+s")
+        await settle(pilot)
+    [it] = store.load().items
+    assert (it.title, it.claimed_by) == ("Mine", "user")

@@ -52,7 +52,7 @@ def _full(item: Item) -> str:
     out = [
         f"#{item.id}  {item.title}",
         f"{item.type}  P{item.priority} ({PRIORITY_LABELS.get(item.priority, '?')})  {item.status}"
-        + (f"  claimed by {item.claimed_by}" if item.claimed_by else ""),
+        + (f"  taken by {item.claimed_by}" if item.claimed_by else ""),
         f"created {item.created_at} by {item.created_by}; updated {item.updated_at} by {item.updated_by}",
     ]
     if item.body.strip():
@@ -187,6 +187,10 @@ def cmd_claim(args: argparse.Namespace) -> int:
 
 def cmd_release(args: argparse.Namespace) -> int:
     return _show_change(args, "released", ops.release(_store(args), args.id, actor=args.actor, note=args.note))
+
+
+def cmd_tag(args: argparse.Namespace) -> int:
+    return _show_change(args, "tagged", ops.update(_store(args), args.id, actor=args.actor, taken_by=args.who))
 
 
 def cmd_note(args: argparse.Namespace) -> int:
@@ -489,6 +493,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("release", cmd_release, "give up a claim; the item returns to todo")
     sp.add_argument("id", type=_item_id)
     sp.add_argument("--note", help="why you are releasing it")
+
+    sp = add("tag", cmd_tag, "set who has taken an item (user only): none, agent, or user (the agent must not touch it)")
+    sp.add_argument("id", type=_item_id)
+    sp.add_argument("who", choices=("none", "agent", "user"))
 
     sp = add("note", cmd_note, "append a note to an item's log")
     sp.add_argument("id", type=_item_id)

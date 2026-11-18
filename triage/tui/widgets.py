@@ -13,7 +13,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from ..model import FLOW, PRIORITY_LABELS, Item
+from ..model import FLOW, PRIORITY_LABELS, USER_TAG, Item
 from .keys import fit_hints
 
 # ---- tabs --------------------------------------------------------------------
@@ -92,12 +92,14 @@ def type_style(t: str, pal: dict[str, str]) -> str:
     }.get(t, pal["text"])
 
 
-def agent_badge(item: Item) -> str:
-    if item.claimed_by:
-        return f"⚑{item.claimed_by}"
-    if item.updated_by == "agent":
-        return "⚑agent"
-    return ""
+def taken_badge(item: Item) -> str:
+    """The "taken by" tag shown on a row: the agent's name, ``user``, or nothing."""
+    return item.claimed_by or ""
+
+
+def taken_style(item: Item, pal: dict[str, str]) -> str:
+    """The user's tag reads as the user (primary, like the user's log entries); an agent's as the agent (accent)."""
+    return f"bold {pal['primary'] if item.claimed_by == USER_TAG else pal['accent']}"
 
 
 # ---- time --------------------------------------------------------------------
@@ -162,14 +164,14 @@ def render_tabs(counts: dict[str, int], active: str, width: int, pal: dict[str, 
 # ---- list rows ---------------------------------------------------------------
 
 def render_row(item: Item, width: int, pal: dict[str, str], show_status: bool, flash: bool = False) -> Text:
-    """``#12  P1  fix   Title…   ⚑agent`` fitted to ``width`` cells."""
+    """``#12  P1  fix   Title…   agent`` fitted to ``width`` cells."""
     row = Text(no_wrap=True, overflow="ellipsis")
     row.append(f"{item.ref:>4}  ", style=pal["text-muted"])
     row.append(f"P{item.priority}  ", style=priority_style(item.priority, pal))
     row.append(f"{TYPE_SHORT.get(item.type, item.type):<5} ", style=type_style(item.type, pal))
     if show_status:
         row.append(f"{item.status:<8}", style=pal["text-muted"])
-    badge = agent_badge(item)
+    badge = taken_badge(item)
     badge_w = len(badge) + 1 if badge else 0
     room = max(8, width - row.cell_len - badge_w)
     title = item.title
@@ -177,7 +179,7 @@ def render_row(item: Item, width: int, pal: dict[str, str], show_status: bool, f
         title = title[: max(1, room - 1)] + "…"
     row.append(title.ljust(room), style={1: "bold", 4: "dim"}.get(item.priority, ""))
     if badge:
-        row.append(" " + badge, style=f"bold {pal['accent']}")
+        row.append(" " + badge, style=taken_style(item, pal))
     if flash:
         row.stylize(f"reverse bold {pal['accent']}")
     return row
@@ -264,7 +266,7 @@ def render_detail(item: Item, pal: dict[str, str], edit_key: str = "e") -> Rende
     meta.append(item.status, style="bold")
     if item.claimed_by:
         meta.append(" · ", style="dim")
-        meta.append(f"⚑ {item.claimed_by}", style=f"bold {pal['accent']}")
+        meta.append(f"taken by {item.claimed_by}", style=taken_style(item, pal))
     meta.append(f" · created by {item.created_by}", style="dim")
     meta.append(f" · updated {ago(item.updated_at)}", style="dim")
     if item.updated_by == "agent":

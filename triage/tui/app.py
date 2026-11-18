@@ -704,12 +704,14 @@ class TriageApp(App[None]):
     def new_item_status(self) -> str:
         return self.tab if self.tab in ("inbox", "todo") else self.cfg.get("ui.new_item_status", "inbox")
 
-    def _add(self, title: str, *, type: str | None, priority: int | None, status: str | None, body: str = "") -> str | None:
+    def _add(self, title: str, *, type: str | None, priority: int | None, status: str | None, body: str = "",
+             taken_by: str = "none") -> str | None:
         """Create an item. Returns an error message, or None on success."""
         if self.store is None:
             return "no board open"
         status = status or self.new_item_status()
-        change = self._op(ops.add, title, body=body, type=type or "feature", priority=priority or 3, status=status)
+        change = self._op(ops.add, title, body=body, type=type or "feature", priority=priority or 3, status=status,
+                          taken_by=taken_by)
         if change is None:
             return self.message or "could not add"
         where = "" if status == self.tab or self.tab == "all" else f" → {status}"
@@ -734,7 +736,8 @@ class TriageApp(App[None]):
         def save(v: dict) -> str | None:
             if not v["title"].strip():
                 return "title must not be empty"
-            return self._add(v["title"], type=v["type"], priority=v["priority"], status=None, body=v["body"])
+            return self._add(v["title"], type=v["type"], priority=v["priority"], status=None, body=v["body"],
+                             taken_by=v["taken_by"])
 
         self.push_screen(ItemFormScreen(None, save))
 
@@ -746,7 +749,8 @@ class TriageApp(App[None]):
         def save(v: dict) -> str | None:
             if not v["title"].strip():
                 return "title must not be empty"
-            orig = {"title": item.title, "body": item.body, "type": item.type, "priority": item.priority}
+            orig = {"title": item.title, "body": item.body, "type": item.type, "priority": item.priority,
+                    "taken_by": item.claimed_by or "none"}
             edits = {k: v[k] for k in orig if v[k] != orig[k]}
             if not edits:
                 self.say(f"{item.ref}: no changes")
