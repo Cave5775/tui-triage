@@ -20,7 +20,7 @@ from textual.widgets import DataTable, Footer, Input, Label, OptionList, Static,
 from textual.widgets.option_list import Option
 
 from .. import config
-from ..model import PRIORITY_LABELS, PRIORITIES, TYPES, Item
+from ..model import AGENT_TAG, PRIORITY_LABELS, PRIORITIES, TYPES, USER_TAG, Item
 from ..paths import RepoNotFound, RepoRef, board_path, resolve_repo
 from ..store import list_boards, read_json
 from .fields import ChoiceField
@@ -142,10 +142,10 @@ class HelpScreen(ModalScreen[None]):
 
 
 class ItemFormScreen(ModalScreen[None]):
-    """Title, type, priority and body. ``ctrl+s`` saves, ``esc`` cancels, ``tab``/``enter`` move between fields.
+    """Title, type, priority, taken by and body. ``ctrl+s`` saves, ``esc`` cancels, ``tab``/``enter`` move between fields.
 
-    Type and priority are :class:`ChoiceField` widgets: focus one and use ``←``/``→`` (or ``h``/``l``, ``space``) to
-    cycle, or type the first letter (type) or ``1``-``4`` (priority) to jump.
+    Type, priority and taken by are :class:`ChoiceField` widgets: focus one and use ``←``/``→`` (or ``h``/``l``,
+    ``space``) to cycle, or type the first letter (type, taken by) or ``1``-``4`` (priority) to jump.
     """
 
     BINDINGS = [
@@ -153,7 +153,7 @@ class ItemFormScreen(ModalScreen[None]):
         Binding("escape", "cancel", "cancel", key_display="esc", show=True),
     ]
 
-    HINT = "tab/enter next field · ←/→ change type & priority · ctrl+s save · esc cancel"
+    HINT = "tab/enter next field · ←/→ change type, priority & taken by · ctrl+s save · esc cancel"
 
     def __init__(self, item: Item | None, save: Callable[[dict], str | None]) -> None:
         super().__init__()
@@ -177,11 +177,24 @@ class ItemFormScreen(ModalScreen[None]):
                         jump={p: str(p) for p in PRIORITIES},
                         id="f-priority",
                     )
+                with Vertical():
+                    yield Label(_field_label("taken by", "←/→"), id="f-taken-label")
+                    yield ChoiceField(*self._taken_choices(), id="f-taken")
             yield Label("body (markdown)", id="f-body-label")
             yield TextArea(it.body if it else "", id="f-body", tab_behavior="focus")
             yield Static("", id="form-error")
             yield Static(self.HINT, id="form-hint")
         yield Footer()
+
+    def _taken_choices(self) -> tuple[list[tuple[str, str]], str]:
+        """Options and current value for the "taken by" field: none / agent / user.
+
+        An item an agent took under its own name keeps that name as the agent choice, so saving the form
+        without touching the field leaves the tag as it is.
+        """
+        current = self._item.claimed_by if self._item else None
+        agent = current if current and current != USER_TAG else AGENT_TAG
+        return [("none", "none"), (agent, agent), ("user", USER_TAG)], current or "none"
 
     def on_mount(self) -> None:
         self.query_one("#form").border_title = f"Edit {it.ref}" if (it := self._item) else "New item"
@@ -199,6 +212,7 @@ class ItemFormScreen(ModalScreen[None]):
             "title": self.query_one("#f-title", Input).value,
             "type": self.query_one("#f-type", ChoiceField).value,
             "priority": self.query_one("#f-priority", ChoiceField).value,
+            "taken_by": self.query_one("#f-taken", ChoiceField).value,
             "body": self.query_one("#f-body", TextArea).text,
         }
 

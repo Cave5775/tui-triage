@@ -303,7 +303,7 @@ def test_skill_content():
     lines = skill.SKILL_MD.splitlines()
     assert len(lines) <= 80
     for needle in ("triage claim", "triage done", "triage note", "triage release", "triage add", "--json", "triage config get", "bounced",
-                   "commit messages"):
+                   "commit messages", "tagged `user`"):
         assert needle in skill.SKILL_MD
 
 
@@ -454,3 +454,26 @@ def test_list_sort_is_one_list_across_statuses(run, store):
     assert [i["id"] for i in jrun(run, "list", "--sort", "created")] == [2, 3, 1]
     assert [i["id"] for i in jrun(run, "list", "--sort", "oldest", "--status", "todo")] == [1, 3]
     assert run("list", "--sort", "nope")[0] != 0
+
+
+def test_tag_command_is_the_users_and_protects_from_the_agent(run):
+    jrun(run, "add", "reserve me", "--status", "todo")
+    jrun(run, "add", "free work", "--status", "todo", "--priority", "4")
+    tagged = jrun(run, "tag", "1", "user", "--as", "user")
+    assert tagged["claimed_by"] == "user" and tagged["status"] == "todo"
+    code, out, err = run("tag", "1", "none")
+    assert code == 1 and "claim" in err  # the agent may not tag
+    for argv in (("claim", "1"), ("claim", "1", "--force"), ("note", "1", "hi"), ("set", "1", "--title", "x"),
+                 ("done", "1"), ("release", "1")):
+        code, out, err = run(*argv)
+        assert code == 1 and "tagged `user`" in err, argv
+    assert jrun(run, "next")["id"] == 2  # skips the user's item
+    code, _, err = run("claim", "2", "--name", "user")
+    assert code == 1 and "user" in err
+    assert jrun(run, "show", "1")["claimed_by"] == "user"  # reading is fine
+    _, out, _ = run("list")
+    assert "reserve me  [user]" in out
+    _, out, _ = run("show", "1")
+    assert "taken by user" in out
+    assert jrun(run, "tag", "1", "none", "--as", "user")["claimed_by"] is None
+    assert run("tag", "1", "bogus", "--as", "user")[0] != 0

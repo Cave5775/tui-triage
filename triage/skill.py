@@ -18,7 +18,7 @@ The current repo's board (shared by its worktrees) is used by the user in a TUI 
 
 1. Pick the item the user named, else `triage next --json` (claims nothing; `null` = no work) or `triage list --status todo --json`.
 2. Read it: `triage show ID`. A `bounced: ...` log entry is the user's feedback on a previous attempt; address it.
-3. `triage claim ID`. If refused, pick another item or ask; never force it.
+3. `triage claim ID`. If refused, pick another item or ask; never force it. Items tagged `user` are the user's: hands off.
 4. Work. Record decisions: `triage note ID "chose X because Y"`.
 5. `triage done ID --summary "what changed, which files, how verified"`. It goes to the user's Review; never accept it yourself.
 

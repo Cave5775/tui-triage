@@ -1,4 +1,4 @@
-"""The add/edit form: keyboard-first type and priority fields, field order and hints."""
+"""The add/edit form: keyboard-first type, priority and taken-by fields, field order and hints."""
 
 from __future__ import annotations
 
@@ -143,17 +143,17 @@ async def test_priority_cycles_and_wraps():
         assert field.value == 1
 
 
-async def test_enter_advances_title_type_priority_body():
+async def test_enter_advances_title_type_priority_taken_by_body():
     app = Host()
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
         assert focused_id(app) == "f-title"
         order = []
-        for _ in range(3):
+        for _ in range(4):
             await pilot.press("enter")
             await settle(pilot)
             order.append(focused_id(app))
-        assert order == ["f-type", "f-priority", "f-body"]
+        assert order == ["f-type", "f-priority", "f-taken", "f-body"]
         # enter in the body is a newline, not "next"
         await pilot.press("enter")
         assert focused_id(app) == "f-body"
@@ -165,18 +165,18 @@ async def test_tab_order_and_shift_tab():
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
         seen = [focused_id(app)]
-        for _ in range(4):
+        for _ in range(5):
             await pilot.press("tab")
             await settle(pilot)
             seen.append(focused_id(app))
-        assert seen[:4] == ["f-title", "f-type", "f-priority", "f-body"]
-        assert seen[4] == "f-title"  # wraps
+        assert seen[:5] == ["f-title", "f-type", "f-priority", "f-taken", "f-body"]
+        assert seen[5] == "f-title"  # wraps
         await pilot.press("shift+tab")
         await settle(pilot)
         assert focused_id(app) == "f-body"
         await pilot.press("shift+tab")
         await settle(pilot)
-        assert focused_id(app) == "f-priority"
+        assert focused_id(app) == "f-taken"
         # tab in the body moves focus, it does not insert a tab character
         await pilot.press("tab")
         await settle(pilot)
@@ -193,15 +193,17 @@ async def test_ctrl_s_returns_chosen_values_from_any_field():
         await pilot.press("W", "i", "p", "enter")  # title, then on to type
         await pilot.press("i")  # idea
         await pilot.press("enter", "1")  # priority P1
+        await pilot.press("enter", "u")  # taken by user
         await pilot.press("enter", "h", "i")  # body
         await pilot.press("ctrl+s")
         await settle(pilot)
         assert not isinstance(app.screen, ItemFormScreen)
-    assert app.saved == [{"title": "Wip", "type": "idea", "priority": 1, "body": "hi"}]
+    assert app.saved == [{"title": "Wip", "type": "idea", "priority": 1, "taken_by": "user", "body": "hi"}]
     assert isinstance(app.saved[0]["priority"], int) and app.saved[0]["type"] in TYPES
 
 
-@pytest.mark.parametrize("presses,field", [(["tab"], "f-type"), (["tab", "tab"], "f-priority"), (["tab"] * 3, "f-body")])
+@pytest.mark.parametrize("presses,field", [(["tab"], "f-type"), (["tab", "tab"], "f-priority"),
+                                          (["tab"] * 3, "f-taken"), (["tab"] * 4, "f-body")])
 async def test_ctrl_s_and_esc_work_from_every_field(presses, field):
     for key in ("ctrl+s", "escape"):
         app = Host()
@@ -252,14 +254,14 @@ async def test_edit_form_is_prefilled_from_item(store):
         assert form.query_one("#form").border_title == f"Edit {item.ref}"
         await pilot.press("ctrl+s")
         await settle(pilot)
-    assert app.saved == [{"title": "old title", "type": "chore", "priority": 2, "body": "old body"}]
+    assert app.saved == [{"title": "old title", "type": "chore", "priority": 2, "taken_by": "none", "body": "old body"}]
 
 
 async def test_new_form_defaults():
     app = Host()
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
-        assert app.screen.values() == {"title": "", "type": "feature", "priority": 3, "body": ""}
+        assert app.screen.values() == {"title": "", "type": "feature", "priority": 3, "taken_by": "none", "body": ""}
         assert app.screen.query_one("#form").border_title == "New item"
 
 
@@ -268,7 +270,7 @@ async def test_hint_line_and_field_hints_present():
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
         hint = str(app.screen.query_one("#form-hint", Static).render())
-        assert hint == "tab/enter next field · ←/→ change type & priority · ctrl+s save · esc cancel"
+        assert hint == "tab/enter next field · ←/→ change type, priority & taken by · ctrl+s save · esc cancel"
         assert "←/→ to change" in str(app.screen.query_one("#f-type-label").render())
         assert "←/→ or 1-4" in str(app.screen.query_one("#f-priority-label").render())
         assert app.screen.query("Footer")
