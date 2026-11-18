@@ -474,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all", action="store_true", help="include archived items")
     sp.add_argument("--sort", choices=tuple(SORTS), default="priority",
                     help="priority (default: grouped by status), or one list by activity (latest first), "
-                         "created (newest first), oldest or title")
+                         "created (newest first), oldest or number (item number)")
 
     sp = add("show", cmd_show, "show one item with its body and full log")
     sp.add_argument("id", type=_item_id)

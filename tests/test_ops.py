@@ -197,10 +197,10 @@ def test_sorted_items_by_each_sort(store):
     c = ops.add(store, "gamma", status="doing", priority=1).item.id
     _stamp(store, {a: ("2026-01-01T00:00:00Z", "2026-01-05T00:00:00Z"),
                    b: ("2026-01-02T00:00:00Z", "2026-01-09T00:00:00Z"),
-                   c: ("2026-01-03T00:00:00Z", "2026-01-04T00:00:00Z")})
+                   c: ("2025-12-31T00:00:00Z", "2026-01-04T00:00:00Z")})  # created before a and b
     board = store.load()
     order = {by: [i.id for i in board.sorted_items(["todo", "doing"], by)] for by in SORTS}
-    assert order == {"priority": [c, a, b], "activity": [b, a, c], "created": [c, b, a],
-                     "oldest": [a, b, c], "title": [b, a, c]}
+    assert order == {"priority": [c, a, b], "activity": [b, a, c], "created": [b, a, c],
+                     "oldest": [c, a, b], "number": [a, b, c]}
     with pytest.raises(ValueError):
         board.sorted_items("todo", "nope")

@@ -67,7 +67,7 @@ COMMANDS: tuple[Command, ...] = (
     _c("tab_all", "0", "Navigate", "Show All (every non-archived status)", "goto_tab('all')"),
     _c("tab_archived", "9", "Navigate", "Show Archived (also h/l past All)", "goto_tab('archived')"),
     _c("filter", "slash", "Navigate", "Filter by title/body (enter keeps it, esc clears it)", "filter"),
-    _c("sort_next", "o", "Navigate", "Sort by: priority, last activity, newest, oldest, title", "sort_next",
+    _c("sort_next", "o", "Navigate", "Sort by: priority, last activity, newest, oldest, item number", "sort_next",
        row="sort"),
     _c("sort_prev", "O", "Navigate", "Previous sort order", "sort_prev", row="sort"),
     _c("focus_detail", "enter", "Navigate", "Focus the detail pane to scroll it", "focus_detail",
@@ -470,7 +470,7 @@ def fit_hints(entries: list[tuple[str, str]], width: int) -> tuple[list[tuple[st
 
 ROW_HELP = {
     "tabs": "jump to Inbox / Todo / Doing / Review / Done",
-    "sort": "sort by priority / last activity / newest / oldest / title (forward / back)",
+    "sort": "sort by priority / last activity / newest / oldest / item number (forward / back)",
 }
 
 

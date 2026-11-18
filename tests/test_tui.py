@@ -1465,9 +1465,12 @@ async def test_o_cycles_sort_and_J_needs_priority_sort(store):
         await pilot.press("J")  # manual order is refused outside the priority sort
         await settle(pilot)
         assert [i.rank for i in store.load().items] == ranks and ids(app) == [b, c, a]
-        await pilot.press("o", "o", "o")  # newest, oldest, title
+        await pilot.press("o", "o")  # newest, oldest
         await settle(pilot)
-        assert ids(app) == [c, a, b] and "by title" in app._q("#left").border_title
+        assert ids(app) == [a, c, b]
+        await pilot.press("o")  # item number
+        await settle(pilot)
+        assert ids(app) == [a, b, c] and "by item number" in app._q("#left").border_title
         await pilot.press("O", "O", "O", "O")  # back to priority
         await settle(pilot)
         assert ids(app) == [a, b, c] and "by" not in app._q("#left").border_title

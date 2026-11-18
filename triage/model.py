@@ -155,7 +155,7 @@ SORTS: dict[str, str] = {
     "activity": "last activity",
     "created": "newest",
     "oldest": "oldest",
-    "title": "title",
+    "number": "item number",
 }
 
 
@@ -167,8 +167,8 @@ def sort_items(items: list[Item], by: str = "priority") -> list[Item]:
         return sorted(items, key=lambda i: (i.created_at, i.id), reverse=True)
     if by == "oldest":
         return sorted(items, key=lambda i: (i.created_at, i.id))
-    if by == "title":
-        return sorted(items, key=lambda i: (i.title.casefold(), i.id))
+    if by == "number":
+        return sorted(items, key=lambda i: i.id)
     if by != "priority":
         raise ValueError(f"unknown sort {by!r}; expected one of {', '.join(SORTS)}")
     return sorted(items, key=sort_key)
