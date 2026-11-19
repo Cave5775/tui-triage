@@ -31,7 +31,8 @@ through `triage.ops`, and all config writes go through `triage.config.set_value`
   `Item.latest_answer() -> Answer|None` (the reply to the latest question); `Question(text, options, multi, at, by)`,
   `Answer(choices, text, question, at, by)`, each with `.to_dict()`
 - `Board(board_id, repo_name, repo_path, rev, next_id, updated_at, items)` with
-  `.get(id)`, `.sorted_items(statuses=None|str|list)` (None means every FLOW status, i.e. everything except archived; order is priority, rank, id) and `.counts()`
+  `.get(id)`, `.sorted_items(statuses=None|str|list, by="priority")` (None means every FLOW status, i.e. everything except archived; `by` is a `SORTS` key: `priority` = priority, rank, id; also `activity`, `created`, `oldest`, `number`) and `.counts()`
+- `SORTS` (sort name -> label) and `sort_items(items, by="priority")`
 
 ### `triage.store`
 - `BoardStore(ref)`: `.ref`, `.path`, `.load() -> Board`, `.exists()`, `.stat_token()` (a cheap `(mtime_ns, size)`, used for polling), `.transaction()` (private to `ops`)
@@ -67,6 +68,7 @@ through `triage.ops`, and all config writes go through `triage.config.set_value`
 | ui.new_item_status | `inbox` |
 | ui.confirm_delete | true |
 | ui.poll_seconds | 1.0 |
+| ui.sort | `priority` (a `SORTS` key) |
 
 ### `triage.ops` (all mutations; each returns `Change`)
 `Item.claimed_by` is the one "taken by" tag: `None` = none, the agent's name (default `agent`) = the agent took it, `"user"` = reserved by the user. For `actor="agent"`, every mutation of an item tagged `user` raises `PermissionDenied` (force does not help), `next_item` skips it, and the agent may not claim under the name `user`. The user's tag survives status moves.
@@ -92,8 +94,8 @@ Front ends should catch `(TriageError, ValueError)`.
 | `finish(store, id, *, actor="agent", summary="")` | agent → `agent.finish_status`; user → done |
 | `accept(store, id, *, actor="user", note=None)` | review → done |
 | `bounce(store, id, reason="", *, actor="user")` | review/done → todo, logs "bounced: reason"; user only (agents get PermissionDenied) |
-| `note(store, id, text, *, actor)` | always allowed |
-| `ask(store, id, question, options, multi=False, *, actor="agent")` | logs a `question`; 2-6 distinct non-empty options; asking again replaces an open question; always allowed |
+| `note(store, id, text, *, actor)` | allowed unless an agent targets a `user`-tagged item |
+| `ask(store, id, question, options, multi=False, *, actor="agent")` | logs a `question`; 2-6 distinct non-empty options; asking again replaces an open question; allowed unless an agent targets a `user`-tagged item |
 | `answer(store, id, choices, text="", *, actor="user")` | logs an `answer` to the open question (`InvalidOperation` when there is none); choices must be options (one unless `multi`), free text may replace or add to them; agents get PermissionDenied; undoable (`revert` removes the reply and reopens the question) |
 | `reorder(store, id, delta, *, actor)` | moves within the status column; adopts the neighbour's priority when crossing a band; meta has the delta |
 | `archive(store, id, *, actor)` | → archived (soft delete) |

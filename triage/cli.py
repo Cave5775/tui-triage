@@ -16,7 +16,7 @@ from typing import Any
 
 from . import config as cfgmod
 from . import ops, store as storemod
-from .model import ACTORS, FLOW, PRIORITY_LABELS, SORTS, STATUSES, Item, normalize_status
+from .model import ACTORS, FLOW, PRIORITY_LABELS, SORTS, STATUSES, Item, LogEntry, normalize_status
 from .paths import RepoNotFound, resolve_repo
 from .store import LockTimeout
 
@@ -207,33 +207,47 @@ def cmd_note(args: argparse.Namespace) -> int:
 WAIT_POLL_SECONDS = 0.5
 
 
-def _answer_view(item: Item, asked_at: int) -> dict[str, Any]:
-    """``{id, answered, question, answer}`` for the question logged at index ``asked_at`` (the one just asked)."""
-    reply = next((e for e in item.log[asked_at + 1:] if e.kind == "answer"), None)
-    q = item.log[asked_at]
-    question = {"text": q.text, "options": q.data.get("options", []), "multi": bool(q.data.get("multi"))}
+def _answer_view(item: Item, asked: LogEntry) -> dict[str, Any]:
+    """``{id, answered, replaced, question, answer}`` for the ``asked`` question entry.
+
+    The entry is matched by value, not position: undo removes log entries, which shifts the indexes.
+    ``replaced`` means a newer question took over (or the entry is gone), so no answer to this one can come.
+    """
+    index = next((i for i in range(len(item.log) - 1, -1, -1) if item.log[i] == asked), None)
+    reply = None
+    replaced = index is None
+    for e in item.log[index + 1:] if index is not None else ():
+        if e.kind == "answer":
+            reply = e
+            break
+        if e.kind == "question":
+            replaced = True
+            break
+    question = {"text": asked.text, "options": asked.data.get("options", []), "multi": bool(asked.data.get("multi"))}
     answer = None
     if reply is not None:
         answer = {"choices": reply.data.get("choices", []), "text": reply.data.get("text", ""),
                   "by": reply.by, "at": reply.at}
-    return {"id": item.id, "answered": answer is not None, "question": question, "answer": answer}
+    return {"id": item.id, "answered": answer is not None, "replaced": replaced, "question": question, "answer": answer}
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
     st = _store(args)
     change = ops.ask(st, args.id, _words(args.question), args.option or [], multi=args.multi, actor=args.actor)
-    asked_at = len(change.item.log) - 1
-    view = _answer_view(change.item, asked_at)
+    asked = change.item.log[-1]
+    view = _answer_view(change.item, asked)
     if args.wait is not None and not view["answered"]:
         deadline = None if args.wait < 0 else time.monotonic() + args.wait
-        while not view["answered"] and (deadline is None or time.monotonic() < deadline):
+        while not (view["answered"] or view["replaced"]) and (deadline is None or time.monotonic() < deadline):
             time.sleep(WAIT_POLL_SECONDS if deadline is None else max(0.0, min(WAIT_POLL_SECONDS, deadline - time.monotonic())))
-            view = _answer_view(ops.get(st, args.id), asked_at)
+            view = _answer_view(ops.get(st, args.id), asked)
     if args.json:
         _emit_json(view)
     elif view["answered"]:
         a = view["answer"]
         print(f"#{args.id} answered by {a['by']}: " + ", ".join(a["choices"] + ([f"other: {a['text']}"] if a["text"] else [])))
+    elif view["replaced"]:
+        print(f"#{args.id}: this question was replaced; see `triage show {args.id}`")
     elif args.wait is not None:
         print(f"#{args.id}: no answer yet; read it later with `triage show {args.id}`")
     else:

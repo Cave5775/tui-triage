@@ -482,7 +482,7 @@ def test_tag_command_is_the_users_and_protects_from_the_agent(run):
 def test_ask_then_show_exposes_the_open_question(run):
     jrun(run, "add", "pick a cache", "--status", "todo")
     asked = jrun(run, "ask", "1", "Which", "cache?", "--option", "Redis", "--option", "SQLite")
-    assert asked == {"id": 1, "answered": False, "answer": None,
+    assert asked == {"id": 1, "answered": False, "replaced": False, "answer": None,
                      "question": {"text": "Which cache?", "options": ["Redis", "SQLite"], "multi": False}}
     shown = jrun(run, "show", "1")
     assert shown["question"]["text"] == "Which cache?" and shown["question"]["options"] == ["Redis", "SQLite"]
@@ -552,6 +552,32 @@ def test_ask_wait_returns_the_answer(run, repo, monkeypatch):
     finally:
         t.join()
     assert code == 0 and out.strip() == "#1 answered by user: b"
+
+
+def test_wait_view_survives_undo_shifting_the_log(store):
+    from triage import cli, ops
+
+    item_id = ops.add(store, "x", actor="user").item.id
+    ops.note(store, item_id, "earlier", actor="user")
+    asked = ops.ask(store, item_id, "Which?", ["a", "b"]).item.log[-1]
+    with store.transaction() as board:
+        del board.get(item_id).log[1]  # what undoing the earlier change does
+    view = cli._answer_view(ops.get(store, item_id), asked)
+    assert view["answered"] is False and view["replaced"] is False
+    ops.answer(store, item_id, ["a"], "")
+    view = cli._answer_view(ops.get(store, item_id), asked)
+    assert view["answered"] is True and view["answer"]["choices"] == ["a"]
+
+
+def test_wait_view_does_not_take_the_answer_to_a_newer_question(store):
+    from triage import cli, ops
+
+    item_id = ops.add(store, "x", actor="user").item.id
+    first = ops.ask(store, item_id, "First?", ["a", "b"]).item.log[-1]
+    ops.ask(store, item_id, "Second?", ["c", "d"])
+    ops.answer(store, item_id, ["c"], "")
+    view = cli._answer_view(ops.get(store, item_id), first)
+    assert view["answered"] is False and view["replaced"] is True and view["answer"] is None
 
 
 def test_ask_wait_times_out_and_leaves_the_question_open(run, monkeypatch):
