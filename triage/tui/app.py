@@ -577,7 +577,7 @@ class TriageApp(App[None]):
         def done(result: tuple[list[str], str] | None) -> None:
             if result is not None:
                 choices, text = result
-                self._op(ops.answer, item.id, choices, text=text, what=f"answered {item.ref}")
+                self._op(ops.answer, item.id, choices, text=text, question=question, what=f"answered {item.ref}")
 
         self.push_screen(AnswerScreen(item.ref, question), done)
 
@@ -706,7 +706,8 @@ class TriageApp(App[None]):
         self.undo_stack.pop()
         item = change.item
         self.reload(select_id=item.id if result.after is not None else None)
-        self.say(f"undid: {change.op} {item.ref}")
+        caveat = " — the question is open again, but the agent may already have read your answer"
+        self.say(f"undid: {change.op} {item.ref}" + (caveat if change.op == "answer" else ""))
 
     def action_copy_handoff(self) -> None:
         item = self._need_item()

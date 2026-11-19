@@ -120,9 +120,12 @@ class AnswerScreen(ModalScreen["tuple[list[str], str] | None"]):
         keys = f"1-{n + 1}"
         hint = (f"j/k move · {keys} or space toggle · enter submit · esc cancel" if self._q.multi
                 else f"j/k move · {keys} pick · enter confirm · esc cancel")
+        kind = "pick any" if self._q.multi else "pick one"
+        if not n:  # an older TUI rewrote the board and dropped the options
+            hint, kind = "enter submit · esc cancel", "the options are no longer available: type your answer"
         with Vertical(id="answer"):
             yield Static(Text(self._q.text, style="bold"), id="answer-question")
-            yield Static(Text("pick any" if self._q.multi else "pick one", style="dim"), id="answer-kind")
+            yield Static(Text(kind, style="dim"), id="answer-kind")
             yield Static("", id="answer-options")
             with Horizontal(id="answer-other"):
                 yield Static("", id="answer-other-label")
@@ -134,6 +137,8 @@ class AnswerScreen(ModalScreen["tuple[list[str], str] | None"]):
     def on_mount(self) -> None:
         self.query_one("#answer").border_title = f"Question on {self._ref}"
         self._redraw()
+        if not self._options:
+            self._go_other()
 
     def _redraw(self) -> None:
         accent = palette(self.app)["accent"]

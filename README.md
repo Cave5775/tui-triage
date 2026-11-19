@@ -226,7 +226,7 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | `triage release ID [--note T]` | give up a claim (→ Todo) |
 | `triage tag ID none\|agent\|user` | set who has taken an item; `user` keeps the agent off it (you only: add `--as user`) |
 | `triage note ID TEXT` | add a note |
-| `triage ask ID QUESTION --option A --option B [--multi] [--wait [SECONDS]]` | ask the user a question with 2-6 options; `--wait` prints the answer (waits until answered, or for SECONDS; an unanswered question stays open and `show` exposes it) |
+| `triage ask ID QUESTION --option A --option B [--multi] [--wait [SECONDS]]` | ask the user a question with 2-6 options; `--wait` prints the answer (waits until answered, or for SECONDS; without an answer it exits `3`, the question stays open and `show` exposes it) |
 | `triage answer ID [--choice A]... [--text T]` | answer an open question (you only: add `--as user`) |
 | `triage done ID [--summary T]` | finish (→ Review, or Done if configured) |
 | `triage accept ID` / `triage bounce ID REASON` | review decisions (you only: add `--as user`) |
@@ -240,7 +240,7 @@ Every command works from inside the repo (or with `--repo PATH`), and accepts `-
 | `triage install-skill [--force] [--dir PATH]` | install the Claude Code skill |
 
 The CLI acts as the **agent** by default. Add `--as user` (or set `TRIAGE_ACTOR=user`) to act as yourself.
-Exit codes: `0` ok, `1` error (the reason is on stderr, or in the JSON), `2` wrong usage.
+Exit codes: `0` ok, `1` error (the reason is on stderr, or in the JSON), `2` wrong usage, `3` `ask --wait` ended without an answer.
 
 ## Development
 

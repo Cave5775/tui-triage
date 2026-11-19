@@ -25,6 +25,7 @@ from .model import (
     normalize_status,
     normalize_type,
     now_iso,
+    Question,
     sort_key,
     USER_TAG,
 )
@@ -451,8 +452,14 @@ def ask(
         return Change("ask", before, _snapshot(item))
 
 
-def answer(store: BoardStore, item_id: int, choices: list[str], text: str = "", *, actor: str = "user") -> Change:
-    """Record the user's reply to the item's open question: options picked and/or free text ("Other")."""
+def answer(
+    store: BoardStore, item_id: int, choices: list[str], text: str = "", *, actor: str = "user",
+    question: Question | None = None,
+) -> Change:
+    """Record the user's reply to the item's open question: options picked and/or free text ("Other").
+
+    ``question`` is the question the user was shown; the reply is refused if a newer one replaced it meanwhile.
+    """
     _check_actor(actor)
     if actor == "agent":
         raise PermissionDenied(
@@ -465,6 +472,8 @@ def answer(store: BoardStore, item_id: int, choices: list[str], text: str = "", 
         q = item.open_question()
         if q is None:
             raise InvalidOperation(f"{item.ref} has no open question")
+        if question is not None and q != question:
+            raise InvalidOperation(f"the question on {item.ref} changed; read it and answer again")
         picked: list[str] = []
         for c in choices:
             match = next((o for o in q.options if o == c), None) or next(

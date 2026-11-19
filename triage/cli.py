@@ -205,6 +205,7 @@ def cmd_note(args: argparse.Namespace) -> int:
 
 
 WAIT_POLL_SECONDS = 0.5
+EXIT_NO_ANSWER = 3  # `ask --wait` ended without an answer (timeout, interrupted, or the question was replaced)
 
 
 def _answer_view(item: Item, asked: LogEntry) -> dict[str, Any]:
@@ -226,21 +227,26 @@ def _answer_view(item: Item, asked: LogEntry) -> dict[str, Any]:
     question = {"text": asked.text, "options": asked.data.get("options", []), "multi": bool(asked.data.get("multi"))}
     answer = None
     if reply is not None:
-        answer = {"choices": reply.data.get("choices", []), "text": reply.data.get("text", ""),
-                  "by": reply.by, "at": reply.at}
+        choices, text = reply.answer_parts()
+        answer = {"choices": list(choices), "text": text, "by": reply.by, "at": reply.at}
     return {"id": item.id, "answered": answer is not None, "replaced": replaced, "question": question, "answer": answer}
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
+    if args.wait is not None and not args.wait >= 0:
+        raise ValueError("--wait takes a number of seconds, 0 or more")
     st = _store(args)
     change = ops.ask(st, args.id, _words(args.question), args.option or [], multi=args.multi, actor=args.actor)
     asked = change.item.log[-1]
     view = _answer_view(change.item, asked)
     if args.wait is not None and not view["answered"]:
-        deadline = None if args.wait < 0 else time.monotonic() + args.wait
-        while not (view["answered"] or view["replaced"]) and (deadline is None or time.monotonic() < deadline):
-            time.sleep(WAIT_POLL_SECONDS if deadline is None else max(0.0, min(WAIT_POLL_SECONDS, deadline - time.monotonic())))
-            view = _answer_view(ops.get(st, args.id), asked)
+        deadline = time.monotonic() + args.wait
+        try:
+            while not (view["answered"] or view["replaced"]) and time.monotonic() < deadline:
+                time.sleep(max(0.0, min(WAIT_POLL_SECONDS, deadline - time.monotonic())))
+                view = _answer_view(ops.get(st, args.id), asked)
+        except KeyboardInterrupt:
+            pass  # stop waiting; the question stays open
     if args.json:
         _emit_json(view)
     elif view["answered"]:
@@ -252,7 +258,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print(f"#{args.id}: no answer yet; read it later with `triage show {args.id}`")
     else:
         print(f"asked #{args.id}: {view['question']['text']}")
-    return 0
+    return EXIT_NO_ANSWER if args.wait is not None and not view["answered"] else 0
 
 
 def cmd_answer(args: argparse.Namespace) -> int:
@@ -575,8 +581,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("question", nargs="+")
     sp.add_argument("--option", action="append", metavar="TEXT", help="an answer to offer; repeat for 2-6 options")
     sp.add_argument("--multi", action="store_true", help="the user may pick several options")
-    sp.add_argument("--wait", nargs="?", type=float, const=-1.0, default=None, metavar="SECONDS",
-                    help="wait for the answer and print it (bare --wait: until answered; on timeout the question stays open)")
+    sp.add_argument("--wait", nargs="?", type=float, const=float("inf"), default=None, metavar="SECONDS",
+                    help="wait for the answer and print it (bare --wait: until answered); "
+                         "exits 3 without an answer, and the question stays open")
 
     sp = add("answer", cmd_answer, "answer an item's open question (the user's job: use --as user)")
     sp.add_argument("id", type=_item_id)
