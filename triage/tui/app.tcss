@@ -153,8 +153,54 @@ ConfirmScreen {
     color: $text-muted;
 }
 
-HelpScreen, SettingsScreen, RepoPickerScreen, ItemFormScreen {
+HelpScreen, SettingsScreen, RepoPickerScreen, ItemFormScreen, AnswerScreen {
     align: center middle;
+}
+
+#answer {
+    width: 80;
+    max-width: 98%;
+    height: auto;
+    max-height: 95%;
+    padding: 1 2;
+    background: $panel;
+    border: round $accent;
+    border-title-color: $accent;
+}
+
+#answer-kind {
+    height: 1;
+    margin-bottom: 1;
+}
+
+#answer-options {
+    height: auto;
+}
+
+#answer-other {
+    height: 1;
+}
+
+#answer-other-label {
+    width: auto;
+}
+
+#answer-input {
+    width: 1fr;
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: $boost;
+}
+
+#answer-error {
+    height: 1;
+}
+
+#answer-hint {
+    margin-top: 1;
+    height: auto;
+    color: $text-muted;
 }
 
 #help {

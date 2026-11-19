@@ -19,11 +19,14 @@ from .model import (
     Board,
     Item,
     LogEntry,
+    MAX_OPTIONS,
+    MIN_OPTIONS,
     normalize_priority,
     normalize_status,
     normalize_type,
     now_iso,
     sort_key,
+    USER_TAG,
 )
 from .paths import resolve_repo
 from .store import BoardStore
@@ -88,8 +91,8 @@ def _require(board: Board, item_id: int) -> Item:
     return item
 
 
-def _log(item: Item, actor: str, kind: str, text: str) -> None:
-    item.log.append(LogEntry(at=now_iso(), by=actor, kind=kind, text=text))
+def _log(item: Item, actor: str, kind: str, text: str, data: dict[str, Any] | None = None) -> None:
+    item.log.append(LogEntry(at=now_iso(), by=actor, kind=kind, text=text, data=data or {}))
 
 
 def _touch(item: Item, actor: str) -> None:
@@ -102,9 +105,26 @@ def _apply_status(item: Item, target: str, actor: str) -> None:
         return
     _log(item, actor, "status", f"{item.status} -> {target}")
     item.status = target
-    if target in ("inbox", "todo"):
+    if target in ("inbox", "todo") and item.claimed_by != USER_TAG:  # the user's tag outlives status moves
         item.claimed_by = None
     _touch(item, actor)
+
+
+def _reserved(item: Item, actor: str) -> None:
+    """Raise PermissionDenied if ``actor`` is the agent and the user tagged ``item`` as theirs."""
+    if actor == "agent" and item.claimed_by == USER_TAG:
+        raise PermissionDenied(
+            f"#{item.id} is tagged `user`: the user reserved it, so agents may not change it; "
+            "pick another item or tell the user what you would have done"
+        )
+
+
+def normalize_taken_by(value: str | None) -> str | None:
+    """``None``/``""``/``"none"`` -> None (untagged); anything else is the tag text (``agent``, ``user``, a name)."""
+    text = (value or "").strip()
+    if text.lower() in ("", "none"):
+        return None
+    return USER_TAG if text.lower() == USER_TAG else text
 
 
 def _agent_status_rule(cfg: dict, item: Item, target: str) -> None:
@@ -153,7 +173,7 @@ def get(store: BoardStore, item_id: int) -> Item:
 def next_item(board: Board, cfg: dict[str, Any]) -> Item | None:
     """Best unclaimed item for the agent: from pickup statuses, todo before inbox, then priority/rank."""
     pickup = cfg["agent.pickup_statuses"]
-    candidates = [i for i in board.items if i.status in pickup and not i.claimed_by]
+    candidates = [i for i in board.items if i.status in pickup and not i.claimed_by]  # user-tagged = taken
     candidates.sort(key=lambda i: (i.status != "todo",) + sort_key(i))
     return candidates[0] if candidates else None
 
@@ -162,6 +182,9 @@ def item_json(item: Item) -> dict[str, Any]:
     """Stable JSON shape for CLI output."""
     d = item.to_dict()
     d["ref"] = item.ref
+    q, a = item.open_question(), item.latest_answer()
+    d["question"] = q.to_dict() if q else None  # open: waiting for the user
+    d["answer"] = a.to_dict() if a else None  # the user's reply to the latest question
     return d
 
 
@@ -176,8 +199,12 @@ def add(
     type: str = "feature",
     priority: int | str = 3,
     status: str | None = None,
+    taken_by: str | None = None,
 ) -> Change:
     _check_actor(actor)
+    tag = normalize_taken_by(taken_by)
+    if tag and actor == "agent":
+        raise PermissionDenied("agents take an item with `triage claim`, not by tagging it when adding")
     title = title.strip()
     if not title:
         raise InvalidOperation("title must not be empty")
@@ -195,9 +222,9 @@ def add(
         rank = max((i.rank for i in board.items), default=0.0) + 1.0
         item = Item(
             id=board.next_id, title=title, body=body, type=t, priority=p, status=st, rank=rank,
-            created_by=actor, updated_by=actor,
+            created_by=actor, updated_by=actor, claimed_by=tag,
         )
-        _log(item, actor, "create", f"created in {st}")
+        _log(item, actor, "create", f"created in {st}" + (f", taken by {tag}" if tag else ""))
         board.next_id += 1
         board.items.append(item)
         return Change("add", None, _snapshot(item))
@@ -212,11 +239,16 @@ def update(
     body: str | None = None,
     type: str | None = None,
     priority: int | str | None = None,
+    taken_by: str | None = None,
 ) -> Change:
+    """Edit fields. ``taken_by`` sets the item's tag (user only): ``none``, ``agent``/a name, or ``user``."""
     _check_actor(actor)
     cfg = config_for(store)
+    if taken_by is not None and actor == "agent":
+        raise PermissionDenied("agents take an item with `triage claim`; tagging is the user's call")
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         if actor == "agent":
             _agent_edit_rule(cfg, item)
         before = _snapshot(item)
@@ -240,6 +272,11 @@ def update(
             if p != item.priority:
                 changes.append(f"priority P{item.priority} -> P{p}")
                 item.priority = p
+        if taken_by is not None:
+            tag = normalize_taken_by(taken_by)
+            if tag != item.claimed_by:
+                changes.append(f"taken by: {item.claimed_by or 'none'} -> {tag or 'none'}")
+                item.claimed_by = tag
         if changes:
             _log(item, actor, "edit", ", ".join(changes))
             _touch(item, actor)
@@ -252,6 +289,7 @@ def set_status(store: BoardStore, item_id: int, status: str, *, actor: str = "us
     cfg = config_for(store)
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         if actor == "agent":
             _agent_status_rule(cfg, item, target)
         before = _snapshot(item)
@@ -284,6 +322,9 @@ def claim(store: BoardStore, item_id: int | None = None, *, actor: str = "agent"
                 raise NotFound("nothing to pick up (no unclaimed items in " + ", ".join(cfg["agent.pickup_statuses"]) + ")")
         else:
             item = _require(board, item_id)
+        _reserved(item, actor)
+        if actor == "agent" and who and normalize_taken_by(who) in (None, USER_TAG):
+            raise PermissionDenied("agents may not claim under the name `user` (the user's own tag) or `none`")
         if item.claimed_by and item.claimed_by != (who or actor) and not force:
             raise InvalidOperation(f"#{item.id} is already claimed by {item.claimed_by} (use force to take over)")
         if actor == "agent":
@@ -306,6 +347,7 @@ def release(store: BoardStore, item_id: int, *, actor: str = "agent", note: str 
     _check_actor(actor)
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         if actor == "agent" and item.status != "doing":
             raise InvalidOperation(f"#{item.id} is {item.status}, not claimed; nothing to release")
         before = _snapshot(item)
@@ -323,6 +365,7 @@ def finish(store: BoardStore, item_id: int, *, actor: str = "agent", summary: st
     cfg = config_for(store)
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         target = cfg["agent.finish_status"] if actor == "agent" else "done"
         if item.status in ("done", "archived"):
             raise InvalidOperation(f"#{item.id} is already {item.status}")
@@ -377,10 +420,70 @@ def note(store: BoardStore, item_id: int, text: str, *, actor: str = "user") -> 
         raise InvalidOperation("note must not be empty")
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         before = _snapshot(item)
         _log(item, actor, "note", text.strip())
         _touch(item, actor)
         return Change("note", before, _snapshot(item))
+
+
+def ask(
+    store: BoardStore, item_id: int, question: str, options: list[str], multi: bool = False, *, actor: str = "agent",
+) -> Change:
+    """Put a multiple-choice question to the user, logged on the item. Asking again replaces an open question."""
+    _check_actor(actor)
+    question = question.strip()
+    if not question:
+        raise InvalidOperation("question must not be empty")
+    opts = [str(o).strip() for o in options]
+    if not MIN_OPTIONS <= len(opts) <= MAX_OPTIONS:
+        raise InvalidOperation(f"give {MIN_OPTIONS}-{MAX_OPTIONS} options (--option, repeated), got {len(opts)}")
+    if not all(opts):
+        raise InvalidOperation("options must not be empty")
+    if len(set(opts)) != len(opts):
+        raise InvalidOperation("options must be distinct")
+    with store.transaction() as board:
+        item = _require(board, item_id)
+        _reserved(item, actor)
+        before = _snapshot(item)
+        _log(item, actor, "question", question, {"options": opts, "multi": bool(multi)})
+        _touch(item, actor)
+        return Change("ask", before, _snapshot(item))
+
+
+def answer(store: BoardStore, item_id: int, choices: list[str], text: str = "", *, actor: str = "user") -> Change:
+    """Record the user's reply to the item's open question: options picked and/or free text ("Other")."""
+    _check_actor(actor)
+    if actor == "agent":
+        raise PermissionDenied(
+            "answering is the user's job; agents may not answer their own questions "
+            f"(wait for the reply with `triage ask {item_id} ... --wait`, or read it with `triage show {item_id}`)"
+        )
+    text = text.strip()
+    with store.transaction() as board:
+        item = _require(board, item_id)
+        q = item.open_question()
+        if q is None:
+            raise InvalidOperation(f"{item.ref} has no open question")
+        picked: list[str] = []
+        for c in choices:
+            match = next((o for o in q.options if o == c), None) or next(
+                (o for o in q.options if o.casefold() == str(c).strip().casefold()), None
+            )
+            if match is None:
+                raise InvalidOperation(f"{c!r} is not one of the options: {', '.join(q.options)}")
+            if match not in picked:
+                picked.append(match)
+        picked.sort(key=q.options.index)
+        if not picked and not text:
+            raise InvalidOperation("answer with at least one option, or some text")
+        if len(picked) > 1 and not q.multi:
+            raise InvalidOperation("this question takes one option, not several")
+        before = _snapshot(item)
+        reply = ", ".join(picked + ([f"other: {text}"] if text else []))
+        _log(item, actor, "answer", reply, {"choices": picked, "text": text})
+        _touch(item, actor)
+        return Change("answer", before, _snapshot(item))
 
 
 def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user") -> Change:
@@ -393,6 +496,7 @@ def reorder(store: BoardStore, item_id: int, delta: int, *, actor: str = "user")
     cfg = config_for(store)
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         if actor == "agent":
             _agent_edit_rule(cfg, item)
         before = _snapshot(item)
@@ -432,6 +536,7 @@ def purge(store: BoardStore, item_id: int, *, actor: str = "user") -> Change:
         raise PermissionDenied("agent may not delete items (agent.can_archive = false)")
     with store.transaction() as board:
         item = _require(board, item_id)
+        _reserved(item, actor)
         board.items.remove(item)
         return Change("purge", _snapshot(item), None)
 
@@ -458,6 +563,17 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
             if change.before.priority != change.after.priority and current.priority == change.after.priority:
                 current.priority = change.before.priority  # the band it adopted goes back too
             _drop_logged_by(current, change)
+            return Change("revert", before, _snapshot(current))
+        if change.op == "answer":  # only the log changed: take the reply back, which reopens the question
+            current = board.get(change.item.id)
+            if current is None:
+                raise NotFound(f"#{change.item.id} no longer exists")
+            added = change.after.log[len(change.before.log):]  # type: ignore[union-attr]
+            if not added or added[-1] not in current.log:
+                raise InvalidOperation(f"{current.ref}'s answer was already changed; nothing to undo")
+            before = _snapshot(current)
+            _drop_logged_by(current, change)
+            _touch(current, actor)
             return Change("revert", before, _snapshot(current))
         if change.before is None:  # undo add
             item = board.get(change.after.id)  # type: ignore[union-attr]
@@ -494,7 +610,8 @@ def revert(store: BoardStore, change: Change, *, actor: str = "user") -> Change:
                     f"{current.ref} was changed since ({', '.join(conflicts)}); nothing to undo safely"
                 )
             return Change("revert", before, _snapshot(current))
-        if "status" in restored and current.status in ("inbox", "todo"):
+        if ("status" in restored and "claimed_by" not in restored and current.status in ("inbox", "todo")
+                and current.claimed_by != USER_TAG):
             current.claimed_by = None
         _drop_logged_by(current, change)
         _touch(current, actor)

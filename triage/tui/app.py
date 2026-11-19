@@ -25,12 +25,12 @@ from textual.timer import Timer
 from textual.widgets import Input, OptionList, Static
 
 from .. import config, ops
-from ..model import FLOW, TYPES, Board, Item
+from ..model import FLOW, SORTS, TYPES, Board, Item
 from ..paths import RepoNotFound, RepoRef, resolve_repo
 from ..store import BoardStore, LockTimeout, touch_registry
 from . import keys
 from .quickadd import QuickAddScreen
-from .screens import ConfirmScreen, HelpScreen, ItemFormScreen, PromptScreen, RepoPickerScreen, SettingsScreen
+from .screens import AnswerScreen, ConfirmScreen, HelpScreen, ItemFormScreen, PromptScreen, RepoPickerScreen, SettingsScreen
 from .widgets import (
     TAB_IDS,
     TAB_LABELS,
@@ -153,6 +153,8 @@ class TriageApp(App[None]):
         self.cfg: dict = dict(config.DEFAULTS)
         self.tab = "inbox"
         self.filter_text = ""
+        self.sort = "priority"  # cycled with o / O; follows ui.sort whenever that setting changes
+        self._sort_default: str | None = None
         self.undo_stack: list[ops.Change] = []
         self._chord: tuple[str, float | None] | None = None
         self._flash: set[int] = set()
@@ -235,6 +237,10 @@ class TriageApp(App[None]):
             self.cfg = ops.config_for(self.store) if self.store else dict(config.DEFAULTS)
         except config.ConfigError as exc:
             self.say(str(exc), error=True)
+        default = self.cfg.get("ui.sort", "priority")
+        if default != self._sort_default:
+            self._sort_default = default
+            self.sort = default if default in SORTS else "priority"
         try:
             self._config_token = config.config_path().stat().st_mtime_ns
         except OSError:
@@ -295,7 +301,14 @@ class TriageApp(App[None]):
             self._flash_timer.stop()
         self._flash_timer = self.set_timer(FLASH_SECONDS, self._end_flash)
         refs = ", ".join(f"#{i}" for i in changed[:4]) + (f" +{len(changed) - 4}" if len(changed) > 4 else "")
-        self.say(f"agent updated {refs}")
+        asking = [
+            i for i in changed
+            if (q := new.get(i).open_question()) and (old.get(i) is None or old.get(i).open_question() != q)
+        ]
+        if asking:
+            self.say(f"agent asked a question on #{asking[0]} — {self.keymap.first('answer')} to answer")
+        else:
+            self.say(f"agent updated {refs}")
 
     def _end_flash(self) -> None:
         self._flash.clear()
@@ -305,7 +318,7 @@ class TriageApp(App[None]):
     def visible_items(self) -> list[Item]:
         if self.board is None:
             return []
-        items = self.board.sorted_items(tab_statuses(self.tab))
+        items = self.board.sorted_items(tab_statuses(self.tab), self.sort)
         q = self.filter_text.strip().lower()
         if q:
             items = [i for i in items if q in i.title.lower() or q in i.body.lower()]
@@ -340,6 +353,8 @@ class TriageApp(App[None]):
             + (f" — press {km.first('quick_add')} to add" if self.tab != "archived" else ""))
         self.items_view.set_items(items, pal, self.tab in ("all", "archived"), self._flash, select_id, empty, reset)
         title = TAB_LABELS[self.tab] + (f" · {len(items)}/{total}" if self.filter_text else f" · {total}")
+        if self.sort != "priority":
+            title += f" · by {SORTS[self.sort]}"
         self._q("#left").border_title = title
         self.update_detail()
         self.refresh_bindings()
@@ -349,7 +364,7 @@ class TriageApp(App[None]):
         return self._main_screen is not None
 
     def update_detail(self) -> None:
-        self.detail.show(self.current_item(), palette(self), self.keymap.first("edit"))
+        self.detail.show(self.current_item(), palette(self), self.keymap.first("edit"), self.keymap.first("answer"))
 
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if event.option_list.id == "items":
@@ -401,7 +416,7 @@ class TriageApp(App[None]):
             dest = FLOW[FLOW.index(item.status) + 1]
         return keys.hint_entries(
             self.hint_context(), self.keymap, dest=dest, can_undo=bool(self.undo_stack),
-            filter_active=bool(self.filter_text.strip()),
+            filter_active=bool(self.filter_text.strip()), question=bool(item and item.open_question()),
         )
 
     def update_hints(self) -> None:
@@ -431,6 +446,9 @@ class TriageApp(App[None]):
             item = self.current_item()
             in_review = bool(item and item.status == "review")
             return in_review if action == "accept" else not in_review
+        if action == "answer":
+            item = self.current_item()
+            return bool(item and item.open_question())
         if action == "detail_back":
             return self.focused is self.detail
         if action == "clear_filter":
@@ -547,6 +565,22 @@ class TriageApp(App[None]):
         if self._need_item():
             self.say(f"{self.keymap.first('accept')} accepts items in Review — this one is not there", error=True)
 
+    def action_answer(self) -> None:
+        item = self._need_item()
+        if item is None:
+            return
+        question = item.open_question()
+        if question is None:
+            self.say(f"{item.ref} has no question to answer", error=True)
+            return
+
+        def done(result: tuple[list[str], str] | None) -> None:
+            if result is not None:
+                choices, text = result
+                self._op(ops.answer, item.id, choices, text=text, what=f"answered {item.ref}")
+
+        self.push_screen(AnswerScreen(item.ref, question), done)
+
     def action_bounce(self) -> None:
         item = self._need_item()
         if item is None:
@@ -594,6 +628,9 @@ class TriageApp(App[None]):
         item = self._need_item()
         if item is None:
             return
+        if self.sort != "priority":
+            self.say(f"manual order needs the priority sort (now by {SORTS[self.sort]}; press {self.keymap.first('sort_next')})")
+            return
         change = self._op(ops.reorder, item.id, delta, select=item.id)
         if change is not None and not change.changed:
             self.say(f"{item.ref} is already at the {'bottom' if delta > 0 else 'top'}")
@@ -606,6 +643,19 @@ class TriageApp(App[None]):
 
     def action_reorder_up(self) -> None:
         self._reorder(-1)
+
+    def _cycle_sort(self, step: int) -> None:
+        order = list(SORTS)
+        self.sort = order[(order.index(self.sort) + step) % len(order)]
+        item = self.current_item()
+        self.render_all(item.id if item else None)
+        self.say(f"sorted by {SORTS[self.sort]}")
+
+    def action_sort_next(self) -> None:
+        self._cycle_sort(1)
+
+    def action_sort_prev(self) -> None:
+        self._cycle_sort(-1)
 
     def _archive_or_purge(self, item: Item) -> None:
         if item.status == "archived":
@@ -680,12 +730,14 @@ class TriageApp(App[None]):
     def new_item_status(self) -> str:
         return self.tab if self.tab in ("inbox", "todo") else self.cfg.get("ui.new_item_status", "inbox")
 
-    def _add(self, title: str, *, type: str | None, priority: int | None, status: str | None, body: str = "") -> str | None:
+    def _add(self, title: str, *, type: str | None, priority: int | None, status: str | None, body: str = "",
+             taken_by: str = "none") -> str | None:
         """Create an item. Returns an error message, or None on success."""
         if self.store is None:
             return "no board open"
         status = status or self.new_item_status()
-        change = self._op(ops.add, title, body=body, type=type or "feature", priority=priority or 3, status=status)
+        change = self._op(ops.add, title, body=body, type=type or "feature", priority=priority or 3, status=status,
+                          taken_by=taken_by)
         if change is None:
             return self.message or "could not add"
         where = "" if status == self.tab or self.tab == "all" else f" → {status}"
@@ -710,7 +762,8 @@ class TriageApp(App[None]):
         def save(v: dict) -> str | None:
             if not v["title"].strip():
                 return "title must not be empty"
-            return self._add(v["title"], type=v["type"], priority=v["priority"], status=None, body=v["body"])
+            return self._add(v["title"], type=v["type"], priority=v["priority"], status=None, body=v["body"],
+                             taken_by=v["taken_by"])
 
         self.push_screen(ItemFormScreen(None, save))
 
@@ -722,7 +775,8 @@ class TriageApp(App[None]):
         def save(v: dict) -> str | None:
             if not v["title"].strip():
                 return "title must not be empty"
-            orig = {"title": item.title, "body": item.body, "type": item.type, "priority": item.priority}
+            orig = {"title": item.title, "body": item.body, "type": item.type, "priority": item.priority,
+                    "taken_by": item.claimed_by or "none"}
             edits = {k: v[k] for k in orig if v[k] != orig[k]}
             if not edits:
                 self.say(f"{item.ref}: no changes")

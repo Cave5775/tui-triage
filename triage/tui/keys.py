@@ -67,6 +67,9 @@ COMMANDS: tuple[Command, ...] = (
     _c("tab_all", "0", "Navigate", "Show All (every non-archived status)", "goto_tab('all')"),
     _c("tab_archived", "9", "Navigate", "Show Archived (also h/l past All)", "goto_tab('archived')"),
     _c("filter", "slash", "Navigate", "Filter by title/body (enter keeps it, esc clears it)", "filter"),
+    _c("sort_next", "o", "Navigate", "Sort by: priority, last activity, newest, oldest, item number", "sort_next",
+       row="sort"),
+    _c("sort_prev", "O", "Navigate", "Previous sort order", "sort_prev", row="sort"),
     _c("focus_detail", "enter", "Navigate", "Focus the detail pane to scroll it", "focus_detail",
        contexts=("list",)),
     _c("toggle_detail", "tab", "Navigate", "Switch focus between the item list and the detail pane",
@@ -86,14 +89,15 @@ COMMANDS: tuple[Command, ...] = (
     _c("retreat", "backspace", "Triage", "Move to the previous status", "retreat"),
     _c("move", "m", "Triage", "Move the item to a status (then i/t/d/r/x)", "chord('move')"),
     _c("accept", "y", "Triage", "Accept (Review only): move to Done", ("accept", "accept_hint")),
+    _c("answer", "r", "Triage", "Answer the agent's question (only when the item has one)", "answer"),
     _c("bounce", "n", "Triage", "Bounce with a reason: back to Todo, logged for the agent", "bounce"),
     _c("priority", "p", "Triage", "Set the priority (then 1-4)", "chord('priority')"),
     _c("prio_up", "plus,equals_sign", "Triage", "Raise priority (lower number)", "prio_up"),
     _c("prio_down", "minus", "Triage", "Lower priority", "prio_down"),
     _c("type_next", "t", "Triage", "Cycle the type forward", "type_next"),
     _c("type_prev", "T", "Triage", "Cycle the type backward", "type_prev"),
-    _c("reorder_down", "J", "Triage", "Move the item down within its column", "reorder_down"),
-    _c("reorder_up", "K", "Triage", "Move the item up within its column", "reorder_up"),
+    _c("reorder_down", "J", "Triage", "Move the item down within its column (priority sort)", "reorder_down"),
+    _c("reorder_up", "K", "Triage", "Move the item up within its column (priority sort)", "reorder_up"),
     _c("archive", "d", "Triage", "Press twice to archive (in Archived: delete, asks y/n)", "chord('archive')"),
     _c("purge", "D", "Triage", "Permanently delete (Archived tab; asks y/n)", ("purge", "purge_hint")),
     _c("undo", "u", "Triage", "Undo the last change made in this session", "undo"),
@@ -417,9 +421,15 @@ LIST_CONTEXTS = ("empty", "item", "review", "archived")
 
 def hint_entries(
     context: str, keymap: Keymap, *, dest: str | None = None, can_undo: bool = False, filter_active: bool = False,
+    question: bool = False,
 ) -> list[tuple[str, str]]:
-    """``(key text, label)`` pairs for a context, using the effective keys."""
+    """``(key text, label)`` pairs for a context, using the effective keys.
+
+    ``question``: the selected item has an open question, so answering leads the bar (like accept in Review).
+    """
     hints = HINT_CONTEXTS[context]
+    if question and context in ("item", "review", "detail"):
+        hints = (_h("answer", "answer"), *hints)
     if filter_active and context in LIST_CONTEXTS:
         hints = (_h("back", "clear filter"), *hints)
     out: list[tuple[str, str]] = []
@@ -465,7 +475,10 @@ def fit_hints(entries: list[tuple[str, str]], width: int) -> tuple[list[tuple[st
 
 # ---- help screen ----------------------------------------------------------------
 
-ROW_HELP = {"tabs": "jump to Inbox / Todo / Doing / Review / Done"}
+ROW_HELP = {
+    "tabs": "jump to Inbox / Todo / Doing / Review / Done",
+    "sort": "sort by priority / last activity / newest / oldest / item number (forward / back)",
+}
 
 
 def _compress(keys: list[str]) -> str:

@@ -7,13 +7,14 @@ from datetime import datetime, timezone
 
 from rich.console import Group, RenderableType
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
-from ..model import FLOW, PRIORITY_LABELS, Item
+from ..model import FLOW, PRIORITY_LABELS, USER_TAG, Item
 from .keys import fit_hints
 
 # ---- tabs --------------------------------------------------------------------
@@ -92,12 +93,15 @@ def type_style(t: str, pal: dict[str, str]) -> str:
     }.get(t, pal["text"])
 
 
-def agent_badge(item: Item) -> str:
-    if item.claimed_by:
-        return f"⚑{item.claimed_by}"
-    if item.updated_by == "agent":
-        return "⚑agent"
-    return ""
+def taken_badge(item: Item) -> str:
+    """The row badge: ``?`` while an agent's question waits for the user, then the "taken by" tag."""
+    tag = item.claimed_by or ""
+    return f"? {tag}".rstrip() if item.open_question() else tag
+
+
+def taken_style(item: Item, pal: dict[str, str]) -> str:
+    """The user's tag reads as the user (primary, like the user's log entries); an agent's as the agent (accent)."""
+    return f"bold {pal['primary'] if item.claimed_by == USER_TAG else pal['accent']}"
 
 
 # ---- time --------------------------------------------------------------------
@@ -162,14 +166,14 @@ def render_tabs(counts: dict[str, int], active: str, width: int, pal: dict[str, 
 # ---- list rows ---------------------------------------------------------------
 
 def render_row(item: Item, width: int, pal: dict[str, str], show_status: bool, flash: bool = False) -> Text:
-    """``#12  P1  fix   Title…   ⚑agent`` fitted to ``width`` cells."""
+    """``#12  P1  fix   Title…   agent`` fitted to ``width`` cells."""
     row = Text(no_wrap=True, overflow="ellipsis")
     row.append(f"{item.ref:>4}  ", style=pal["text-muted"])
     row.append(f"P{item.priority}  ", style=priority_style(item.priority, pal))
     row.append(f"{TYPE_SHORT.get(item.type, item.type):<5} ", style=type_style(item.type, pal))
     if show_status:
         row.append(f"{item.status:<8}", style=pal["text-muted"])
-    badge = agent_badge(item)
+    badge = taken_badge(item)
     badge_w = len(badge) + 1 if badge else 0
     room = max(8, width - row.cell_len - badge_w)
     title = item.title
@@ -177,7 +181,7 @@ def render_row(item: Item, width: int, pal: dict[str, str], show_status: bool, f
         title = title[: max(1, room - 1)] + "…"
     row.append(title.ljust(room), style={1: "bold", 4: "dim"}.get(item.priority, ""))
     if badge:
-        row.append(" " + badge, style=f"bold {pal['accent']}")
+        row.append(" " + badge, style=taken_style(item, pal))
     if flash:
         row.stylize(f"reverse bold {pal['accent']}")
     return row
@@ -251,7 +255,25 @@ class ItemList(OptionList, inherit_bindings=False):
 
 # ---- detail pane -------------------------------------------------------------
 
-def render_detail(item: Item, pal: dict[str, str], edit_key: str = "e") -> RenderableType:
+def render_question(item: Item, pal: dict[str, str], answer_key: str = "r") -> RenderableType | None:
+    """The open question boxed in the accent colour, with numbered options; None when nothing is waiting."""
+    q = item.open_question()
+    if q is None:
+        return None
+    body = Text()
+    body.append("? ", style=f"bold {pal['accent']}")
+    body.append(q.text, style="bold")
+    body.append(f"\n{'pick any' if q.multi else 'pick one'} · {q.by} asked {ago(q.at)}\n", style="dim")
+    for n, option in enumerate(q.options, 1):
+        body.append(f"\n  {n}  ", style=f"bold {pal['accent']}")
+        body.append(option)
+    body.append(f"\n  {len(q.options) + 1}  ", style=f"bold {pal['accent']}")
+    body.append("Other: type your own answer", style="dim")
+    body.append(f"\n\npress {answer_key} to answer", style=f"bold {pal['accent']}")
+    return Panel(body, title="question", title_align="left", border_style=pal["accent"], padding=(0, 1))
+
+
+def render_detail(item: Item, pal: dict[str, str], edit_key: str = "e", answer_key: str = "r") -> RenderableType:
     title = Text()
     title.append(f"{item.ref}  ", style=pal["text-muted"])
     title.append(item.title, style="bold")
@@ -264,7 +286,7 @@ def render_detail(item: Item, pal: dict[str, str], edit_key: str = "e") -> Rende
     meta.append(item.status, style="bold")
     if item.claimed_by:
         meta.append(" · ", style="dim")
-        meta.append(f"⚑ {item.claimed_by}", style=f"bold {pal['accent']}")
+        meta.append(f"taken by {item.claimed_by}", style=taken_style(item, pal))
     meta.append(f" · created by {item.created_by}", style="dim")
     meta.append(f" · updated {ago(item.updated_at)}", style="dim")
     if item.updated_by == "agent":
@@ -290,12 +312,22 @@ def render_detail(item: Item, pal: dict[str, str], edit_key: str = "e") -> Rende
         elif e.kind == "summary":
             log.append("summary: ", style=f"bold {pal['success']}")
             log.append(e.text)
+        elif e.kind == "question":
+            log.append("asks: ", style=f"bold {pal['accent']}")
+            log.append(e.text, style=pal["accent"] if agent else "")
+            if e.data.get("options"):
+                log.append("  [" + " | ".join(str(o) for o in e.data["options"]) + "]", style="dim")
+        elif e.kind == "answer":
+            log.append("answered: ", style=f"bold {pal['success']}")
+            log.append(e.text)
         else:
             log.append(e.text, style=pal["accent"] if agent else "")
     if not item.log:
         log.append("(no activity)", style="dim italic")
 
-    return Group(title, meta, Rule(style="dim"), body, Rule("activity", style="dim", align="left"), log)
+    question = render_question(item, pal, answer_key)
+    head = [title, meta, Rule(style="dim")] + ([question, Text("")] if question is not None else [])
+    return Group(*head, body, Rule("activity", style="dim", align="left"), log)
 
 
 class DetailPane(VerticalScroll, inherit_bindings=False):
@@ -309,9 +341,9 @@ class DetailPane(VerticalScroll, inherit_bindings=False):
     def compose(self):
         yield Static(id="detail-content")
 
-    def show(self, item: Item | None, pal: dict[str, str], edit_key: str = "e") -> None:
+    def show(self, item: Item | None, pal: dict[str, str], edit_key: str = "e", answer_key: str = "r") -> None:
         content = self.query_one("#detail-content", Static)
-        key = None if item is None else (str(item.to_dict()), tuple(sorted(pal.items())), edit_key)
+        key = None if item is None else (str(item.to_dict()), tuple(sorted(pal.items())), edit_key, answer_key)
         if key == self._shown:
             return
         previous_id = self._shown_id
@@ -322,7 +354,7 @@ class DetailPane(VerticalScroll, inherit_bindings=False):
             self.scroll_home(animate=False)
             self.border_title = ""
             return
-        content.update(render_detail(item, pal, edit_key))
+        content.update(render_detail(item, pal, edit_key, answer_key))
         self.border_title = item.ref
         if previous_id != item.id:
             self.scroll_home(animate=False)

@@ -303,7 +303,7 @@ def test_skill_content():
     lines = skill.SKILL_MD.splitlines()
     assert len(lines) <= 80
     for needle in ("triage claim", "triage done", "triage note", "triage release", "triage add", "--json", "triage config get", "bounced",
-                   "commit messages"):
+                   "commit messages", "tagged `user`"):
         assert needle in skill.SKILL_MD
 
 
@@ -441,3 +441,156 @@ def test_config_keys_reports_overrides_and_problems(run, triage_home):
 def test_config_keys_is_read_only_for_everyone(run):
     assert run("config", "keys")[0] == 0  # the agent may read
     assert run("config", "keys", "extra")[0] == 1
+
+
+def test_list_sort_is_one_list_across_statuses(run, store):
+    jrun(run, "add", "old todo", "--status", "todo")
+    jrun(run, "add", "new inbox", "--status", "inbox")
+    jrun(run, "add", "mid todo", "--status", "todo")
+    with store.transaction() as board:
+        for item_id, day in ((1, 1), (2, 3), (3, 2)):
+            board.get(item_id).created_at = f"2026-01-0{day}T00:00:00Z"
+    assert [i["id"] for i in jrun(run, "list")] == [2, 1, 3]  # grouped by status: inbox, then todo
+    assert [i["id"] for i in jrun(run, "list", "--sort", "created")] == [2, 3, 1]
+    assert [i["id"] for i in jrun(run, "list", "--sort", "oldest", "--status", "todo")] == [1, 3]
+    assert run("list", "--sort", "nope")[0] != 0
+
+
+def test_tag_command_is_the_users_and_protects_from_the_agent(run):
+    jrun(run, "add", "reserve me", "--status", "todo")
+    jrun(run, "add", "free work", "--status", "todo", "--priority", "4")
+    tagged = jrun(run, "tag", "1", "user", "--as", "user")
+    assert tagged["claimed_by"] == "user" and tagged["status"] == "todo"
+    code, out, err = run("tag", "1", "none")
+    assert code == 1 and "claim" in err  # the agent may not tag
+    for argv in (("claim", "1"), ("claim", "1", "--force"), ("note", "1", "hi"), ("set", "1", "--title", "x"),
+                 ("done", "1"), ("release", "1")):
+        code, out, err = run(*argv)
+        assert code == 1 and "tagged `user`" in err, argv
+    assert jrun(run, "next")["id"] == 2  # skips the user's item
+    code, _, err = run("claim", "2", "--name", "user")
+    assert code == 1 and "user" in err
+    assert jrun(run, "show", "1")["claimed_by"] == "user"  # reading is fine
+    _, out, _ = run("list")
+    assert "reserve me  [user]" in out
+    _, out, _ = run("show", "1")
+    assert "taken by user" in out
+    assert jrun(run, "tag", "1", "none", "--as", "user")["claimed_by"] is None
+    assert run("tag", "1", "bogus", "--as", "user")[0] != 0
+
+
+def test_ask_then_show_exposes_the_open_question(run):
+    jrun(run, "add", "pick a cache", "--status", "todo")
+    asked = jrun(run, "ask", "1", "Which", "cache?", "--option", "Redis", "--option", "SQLite")
+    assert asked == {"id": 1, "answered": False, "replaced": False, "answer": None,
+                     "question": {"text": "Which cache?", "options": ["Redis", "SQLite"], "multi": False}}
+    shown = jrun(run, "show", "1")
+    assert shown["question"]["text"] == "Which cache?" and shown["question"]["options"] == ["Redis", "SQLite"]
+    assert shown["answer"] is None and shown["log"][-1]["kind"] == "question"
+    code, out, _ = run("show", "1")
+    assert code == 0 and "Open question (pick one): Which cache?" in out and "1. Redis" in out and "2. SQLite" in out
+    code, out, _ = run("ask", "1", "again?", "--option", "a", "--option", "b")
+    assert code == 0 and "asked #1: again?" in out
+    assert jrun(run, "show", "1")["question"]["text"] == "again?"  # replaced
+
+
+def test_answer_then_show_exposes_the_answer(run):
+    jrun(run, "add", "pick", "--status", "todo")
+    jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--option", "c", "--multi")
+    code, _, err = run("answer", "1", "--choice", "a")  # the default actor is the agent
+    assert code == 1 and "user" in err
+    done = jrun(run, "answer", "1", "--choice", "c", "--choice", "a", "--text", "and d", "--as", "user")
+    assert done["question"] is None
+    assert done["answer"]["choices"] == ["a", "c"] and done["answer"]["text"] == "and d"
+    assert done["answer"]["question"] == "Which?" and done["answer"]["by"] == "user"
+    shown = jrun(run, "show", "1")
+    assert shown["answer"] == done["answer"] and shown["log"][-1]["kind"] == "answer"
+    code, out, _ = run("show", "1")
+    assert "Question: Which?" in out and "Answer (user): a, c, other: and d" in out
+    code, out, err = run("answer", "1", "--choice", "a", "--as", "user")
+    assert code == 1 and "no open question" in err
+
+
+@pytest.mark.parametrize("args", [
+    ("--option", "only"), (), ("--option", "a", "--option", "a"),
+    tuple(x for o in "abcdefg" for x in ("--option", o)),
+])
+def test_ask_rejects_bad_options(run, args):
+    jrun(run, "add", "x")
+    code, out, _ = run("ask", "1", "q?", *args, "--json")
+    assert code == 1 and "error" in json.loads(out)
+    assert jrun(run, "show", "1")["question"] is None
+
+
+def test_ask_wait_returns_the_answer(run, repo, monkeypatch):
+    import threading
+    import time
+
+    from triage import cli, ops
+
+    jrun(run, "add", "x")
+    monkeypatch.setattr(cli, "WAIT_POLL_SECONDS", 0.05)
+
+    def reply():
+        st = ops.open_store(repo)
+        while ops.get(st, 1).open_question() is None:  # the question is not logged yet
+            time.sleep(0.02)
+        ops.answer(st, 1, ["b"], "")
+
+    t = threading.Thread(target=reply)
+    t.start()
+    try:
+        got = jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "20")
+    finally:
+        t.join()
+    assert got["answered"] is True and got["answer"]["choices"] == ["b"] and got["answer"]["by"] == "user"
+
+    t = threading.Thread(target=reply)
+    t.start()  # a bare --wait waits until the answer arrives; text output names the choice
+    try:
+        code, out, _ = run("ask", "1", "Again?", "--option", "a", "--option", "b", "--wait")
+    finally:
+        t.join()
+    assert code == 0 and out.strip() == "#1 answered by user: b"
+
+
+def test_wait_view_survives_undo_shifting_the_log(store):
+    from triage import cli, ops
+
+    item_id = ops.add(store, "x", actor="user").item.id
+    ops.note(store, item_id, "earlier", actor="user")
+    asked = ops.ask(store, item_id, "Which?", ["a", "b"]).item.log[-1]
+    with store.transaction() as board:
+        del board.get(item_id).log[1]  # what undoing the earlier change does
+    view = cli._answer_view(ops.get(store, item_id), asked)
+    assert view["answered"] is False and view["replaced"] is False
+    ops.answer(store, item_id, ["a"], "")
+    view = cli._answer_view(ops.get(store, item_id), asked)
+    assert view["answered"] is True and view["answer"]["choices"] == ["a"]
+
+
+def test_wait_view_does_not_take_the_answer_to_a_newer_question(store):
+    from triage import cli, ops
+
+    item_id = ops.add(store, "x", actor="user").item.id
+    first = ops.ask(store, item_id, "First?", ["a", "b"]).item.log[-1]
+    ops.ask(store, item_id, "Second?", ["c", "d"])
+    ops.answer(store, item_id, ["c"], "")
+    view = cli._answer_view(ops.get(store, item_id), first)
+    assert view["answered"] is False and view["replaced"] is True and view["answer"] is None
+
+
+def test_ask_wait_times_out_and_leaves_the_question_open(run, monkeypatch):
+    from triage import cli
+
+    monkeypatch.setattr(cli, "WAIT_POLL_SECONDS", 0.05)
+    jrun(run, "add", "x")
+    got = jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0.2")
+    assert got["answered"] is False and got["answer"] is None
+    code, out, _ = run("ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0")
+    assert code == 0 and "no answer yet" in out and "triage show 1" in out
+    assert jrun(run, "show", "1")["question"]["text"] == "Which?"
+
+
+def test_skill_mentions_asking():
+    assert "triage ask" in skill.SKILL_MD and "--wait" in skill.SKILL_MD

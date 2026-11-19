@@ -10,12 +10,13 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 from . import config as cfgmod
 from . import ops, store as storemod
-from .model import ACTORS, FLOW, PRIORITY_LABELS, STATUSES, Item, normalize_status
+from .model import ACTORS, FLOW, PRIORITY_LABELS, SORTS, STATUSES, Item, LogEntry, normalize_status
 from .paths import RepoNotFound, resolve_repo
 from .store import LockTimeout
 
@@ -52,11 +53,17 @@ def _full(item: Item) -> str:
     out = [
         f"#{item.id}  {item.title}",
         f"{item.type}  P{item.priority} ({PRIORITY_LABELS.get(item.priority, '?')})  {item.status}"
-        + (f"  claimed by {item.claimed_by}" if item.claimed_by else ""),
+        + (f"  taken by {item.claimed_by}" if item.claimed_by else ""),
         f"created {item.created_at} by {item.created_by}; updated {item.updated_at} by {item.updated_by}",
     ]
     if item.body.strip():
         out += ["", item.body.rstrip()]
+    q, a = item.open_question(), item.latest_answer()
+    if q:
+        out += ["", f"Open question ({'pick any' if q.multi else 'pick one'}): {q.text}"]
+        out += [f"  {n}. {o}" for n, o in enumerate(q.options, 1)]
+    elif a:
+        out += ["", f"Question: {a.question}", f"Answer ({a.by}): {a.summary()}"]
     out += ["", "Log:"]
     if not item.log:
         out.append("  (empty)")
@@ -146,9 +153,12 @@ def cmd_list(args: argparse.Namespace) -> int:
     else:
         wanted = list(FLOW)
     items: list[Item] = []
-    for status in STATUSES:
-        if status in wanted:
-            items.extend(board.sorted_items(status))
+    if args.sort != "priority":  # a view across the selected statuses, e.g. what changed last
+        items = board.sorted_items(wanted, args.sort)
+    else:
+        for status in STATUSES:
+            if status in wanted:
+                items.extend(board.sorted_items(status))
     if args.json:
         _emit_json([ops.item_json(i) for i in items])
     else:
@@ -186,8 +196,73 @@ def cmd_release(args: argparse.Namespace) -> int:
     return _show_change(args, "released", ops.release(_store(args), args.id, actor=args.actor, note=args.note))
 
 
+def cmd_tag(args: argparse.Namespace) -> int:
+    return _show_change(args, "tagged", ops.update(_store(args), args.id, actor=args.actor, taken_by=args.who))
+
+
 def cmd_note(args: argparse.Namespace) -> int:
     return _show_change(args, "noted", ops.note(_store(args), args.id, _words(args.text), actor=args.actor))
+
+
+WAIT_POLL_SECONDS = 0.5
+
+
+def _answer_view(item: Item, asked: LogEntry) -> dict[str, Any]:
+    """``{id, answered, replaced, question, answer}`` for the ``asked`` question entry.
+
+    The entry is matched by value, not position: undo removes log entries, which shifts the indexes.
+    ``replaced`` means a newer question took over (or the entry is gone), so no answer to this one can come.
+    """
+    index = next((i for i in range(len(item.log) - 1, -1, -1) if item.log[i] == asked), None)
+    reply = None
+    replaced = index is None
+    for e in item.log[index + 1:] if index is not None else ():
+        if e.kind == "answer":
+            reply = e
+            break
+        if e.kind == "question":
+            replaced = True
+            break
+    question = {"text": asked.text, "options": asked.data.get("options", []), "multi": bool(asked.data.get("multi"))}
+    answer = None
+    if reply is not None:
+        answer = {"choices": reply.data.get("choices", []), "text": reply.data.get("text", ""),
+                  "by": reply.by, "at": reply.at}
+    return {"id": item.id, "answered": answer is not None, "replaced": replaced, "question": question, "answer": answer}
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    st = _store(args)
+    change = ops.ask(st, args.id, _words(args.question), args.option or [], multi=args.multi, actor=args.actor)
+    asked = change.item.log[-1]
+    view = _answer_view(change.item, asked)
+    if args.wait is not None and not view["answered"]:
+        deadline = None if args.wait < 0 else time.monotonic() + args.wait
+        while not (view["answered"] or view["replaced"]) and (deadline is None or time.monotonic() < deadline):
+            time.sleep(WAIT_POLL_SECONDS if deadline is None else max(0.0, min(WAIT_POLL_SECONDS, deadline - time.monotonic())))
+            view = _answer_view(ops.get(st, args.id), asked)
+    if args.json:
+        _emit_json(view)
+    elif view["answered"]:
+        a = view["answer"]
+        print(f"#{args.id} answered by {a['by']}: " + ", ".join(a["choices"] + ([f"other: {a['text']}"] if a["text"] else [])))
+    elif view["replaced"]:
+        print(f"#{args.id}: this question was replaced; see `triage show {args.id}`")
+    elif args.wait is not None:
+        print(f"#{args.id}: no answer yet; read it later with `triage show {args.id}`")
+    else:
+        print(f"asked #{args.id}: {view['question']['text']}")
+    return 0
+
+
+def cmd_answer(args: argparse.Namespace) -> int:
+    change = ops.answer(_store(args), args.id, args.choice or [], args.text or "", actor=args.actor)
+    a = change.item.latest_answer()
+    if args.json:
+        _emit_json(ops.item_json(change.item))
+    else:
+        print(f"answered #{change.item.id}: {a.summary() if a else ''}")
+    return 0
 
 
 def cmd_done(args: argparse.Namespace) -> int:
@@ -469,6 +544,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("list", cmd_list, "list items grouped by status in flow order")
     sp.add_argument("--status", help="comma-separated statuses to show, e.g. todo,doing")
     sp.add_argument("--all", action="store_true", help="include archived items")
+    sp.add_argument("--sort", choices=tuple(SORTS), default="priority",
+                    help="priority (default: grouped by status), or one list by activity (latest first), "
+                         "created (newest first), oldest or number (item number)")
 
     sp = add("show", cmd_show, "show one item with its body and full log")
     sp.add_argument("id", type=_item_id)
@@ -484,9 +562,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id", type=_item_id)
     sp.add_argument("--note", help="why you are releasing it")
 
+    sp = add("tag", cmd_tag, "set who has taken an item (user only): none, agent, or user (the agent must not touch it)")
+    sp.add_argument("id", type=_item_id)
+    sp.add_argument("who", choices=("none", "agent", "user"))
+
     sp = add("note", cmd_note, "append a note to an item's log")
     sp.add_argument("id", type=_item_id)
     sp.add_argument("text", nargs="+")
+
+    sp = add("ask", cmd_ask, "ask the user a multiple-choice question (they answer in the TUI)")
+    sp.add_argument("id", type=_item_id)
+    sp.add_argument("question", nargs="+")
+    sp.add_argument("--option", action="append", metavar="TEXT", help="an answer to offer; repeat for 2-6 options")
+    sp.add_argument("--multi", action="store_true", help="the user may pick several options")
+    sp.add_argument("--wait", nargs="?", type=float, const=-1.0, default=None, metavar="SECONDS",
+                    help="wait for the answer and print it (bare --wait: until answered; on timeout the question stays open)")
+
+    sp = add("answer", cmd_answer, "answer an item's open question (the user's job: use --as user)")
+    sp.add_argument("id", type=_item_id)
+    sp.add_argument("--choice", action="append", metavar="OPTION", help="an option to pick; repeat for several")
+    sp.add_argument("--text", help="free text (\"Other\"), alone or with choices")
 
     sp = add("done", cmd_done, "finish an item (-> review unless configured otherwise)")
     sp.add_argument("id", type=_item_id)

@@ -18,7 +18,7 @@ The current repo's board (shared by its worktrees) is used by the user in a TUI 
 
 1. Pick the item the user named, else `triage next --json` (claims nothing; `null` = no work) or `triage list --status todo --json`.
 2. Read it: `triage show ID`. A `bounced: ...` log entry is the user's feedback on a previous attempt; address it.
-3. `triage claim ID`. If refused, pick another item or ask; never force it.
+3. `triage claim ID`. If refused, pick another item or ask; never force it. Items tagged `user` are the user's: hands off.
 4. Work. Record decisions: `triage note ID "chose X because Y"`.
 5. `triage done ID --summary "what changed, which files, how verified"`. It goes to the user's Review; never accept it yourself.
 
@@ -28,7 +28,7 @@ Item numbers, titles and the board itself (`#9`, "triage item 9", "per the board
 
 ## Stuck or out of scope
 
-- Unclear or blocked: `triage note ID "Question: ..."`, then keep the claim or `triage release ID --note "why"`. Never guess the user's intent.
+- Unclear or blocked: never guess the user's intent. Ask `triage ask ID "question" --option A --option B --wait 300` (2-6 options, `--multi`); it prints the answer, or read it later with `triage show ID`. Or `triage note ID "Question: ..."`, then keep the claim or `triage release ID --note "why"`.
 - Unrelated work you notice: file it, don't do it: `triage add "title" --type fix --priority 3 --body "what, where, how to reproduce"`. Types: feature fix change chore idea. Priority: 1 urgent .. 4 low. Long body: `--body-file PATH` or `--body -` (stdin).
 
 ## Permissions
