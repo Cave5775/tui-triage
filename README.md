@@ -247,7 +247,7 @@ Exit codes: `0` ok, `1` error (the reason is on stderr, or in the JSON), `2` wro
 ```sh
 git clone https://github.com/Cave5775/tui-triage && cd tui-triage
 pip install -e .[dev]
-python -m pytest -q        # about 330 tests, about 3 minutes (the TUI tests wait on live polling)
+python -m pytest -q        # about 340 tests, about 3 minutes (the TUI tests wait on live polling)
 ```
 
 The code is split into a small core that every change goes through (`triage/ops.py`, `store.py`, `config.py`, `model.py`, `paths.py`), plus two front ends: `triage/cli.py` and `triage/tui/`. `docs/CONTRACT.md` describes the core API. The TUI's keymap is defined once in `triage/tui/keys.py` (named commands with default keys, and the hint lists for each context). It drives the key bindings, the bottom bar, the `?` help screen and `triage config init|keys`, and the `[keys]` table in `config.toml` is overlaid on it at startup.
