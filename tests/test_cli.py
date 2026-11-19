@@ -585,12 +585,45 @@ def test_ask_wait_times_out_and_leaves_the_question_open(run, monkeypatch):
 
     monkeypatch.setattr(cli, "WAIT_POLL_SECONDS", 0.05)
     jrun(run, "add", "x")
-    got = jrun(run, "ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0.2")
-    assert got["answered"] is False and got["answer"] is None
+    code, out, _ = run("ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0.2", "--json")
+    got = json.loads(out)
+    assert code == cli.EXIT_NO_ANSWER and got["answered"] is False and got["answer"] is None
     code, out, _ = run("ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "0")
-    assert code == 0 and "no answer yet" in out and "triage show 1" in out
+    assert code == cli.EXIT_NO_ANSWER and "no answer yet" in out and "triage show 1" in out
     assert jrun(run, "show", "1")["question"]["text"] == "Which?"
 
 
 def test_skill_mentions_asking():
     assert "triage ask" in skill.SKILL_MD and "--wait" in skill.SKILL_MD
+
+
+def test_ask_rejects_a_negative_wait_before_asking(run):
+    jrun(run, "add", "x")
+    code, _, err = run("ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "-5")
+    assert code == 1 and "--wait" in err
+    assert jrun(run, "show", "1")["question"] is None
+
+
+def test_ctrl_c_ends_the_wait_cleanly(run, monkeypatch):
+    from triage import cli
+
+    def interrupted(_seconds):
+        raise KeyboardInterrupt
+
+    jrun(run, "add", "x")
+    monkeypatch.setattr(cli.time, "sleep", interrupted)
+    code, out, _ = run("ask", "1", "Which?", "--option", "a", "--option", "b", "--wait", "30")
+    assert code == cli.EXIT_NO_ANSWER and "no answer yet" in out
+    assert jrun(run, "show", "1")["question"]["text"] == "Which?"
+
+
+def test_wait_view_reads_an_answer_whose_data_was_dropped(store):
+    from triage import cli, ops
+
+    item_id = ops.add(store, "x", actor="user").item.id
+    asked = ops.ask(store, item_id, "Which?", ["a", "b"]).item.log[-1]
+    ops.answer(store, item_id, ["a"], "")
+    with store.transaction() as board:
+        board.get(item_id).log[-1].data = {}
+    view = cli._answer_view(ops.get(store, item_id), asked)
+    assert view["answered"] is True and view["answer"]["text"] == "a"

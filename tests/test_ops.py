@@ -407,3 +407,30 @@ def test_undo_answer_reopens_the_question(store):
     assert [e.kind for e in undone.log][-2:] == ["question", "note"]  # the note written meanwhile stays
     with pytest.raises(InvalidOperation):
         ops.revert(store, answered)  # already gone
+
+
+def test_answer_is_refused_when_the_question_changed(store):
+    item_id = ops.add(store, "x", actor="user").item.id
+    seen = ops.ask(store, item_id, "First?", ["a", "b"]).item.open_question()
+    newer = ops.ask(store, item_id, "Second?", ["a", "b"]).item.open_question()
+    with pytest.raises(InvalidOperation, match="changed"):
+        ops.answer(store, item_id, ["a"], "", question=seen)
+    assert ops.get(store, item_id).open_question() == newer
+    assert ops.answer(store, item_id, ["a"], "", question=newer).item.latest_answer().choices == ("a",)
+
+
+def test_questions_stay_usable_when_an_older_version_dropped_the_data(store):
+    item_id = ops.add(store, "x", actor="user").item.id
+    ops.ask(store, item_id, "Which?", ["a", "b"])
+
+    def strip():
+        with store.transaction() as board:
+            for entry in board.get(item_id).log:
+                entry.data = {}
+
+    strip()
+    assert ops.get(store, item_id).open_question().options == ()
+    ops.answer(store, item_id, [], "my own answer")
+    strip()
+    got = ops.get(store, item_id).latest_answer()
+    assert got.choices == () and "my own answer" in got.text

@@ -56,6 +56,12 @@ class LogEntry:
         return cls(at=d.get("at", ""), by=d.get("by", "user"), kind=d.get("kind", "note"), text=d.get("text", ""),
                    data=dict(data) if isinstance(data, dict) else {})
 
+    def answer_parts(self) -> tuple[tuple[str, ...], str]:
+        """``(choices, text)`` of an ``answer`` entry; without ``data`` (dropped by an older TUI) the readable text."""
+        if "choices" in self.data or "text" in self.data:
+            return tuple(str(c) for c in self.data.get("choices") or ()), str(self.data.get("text") or "")
+        return (), self.text
+
 
 @dataclass(frozen=True)
 class Question:
@@ -141,10 +147,8 @@ class Item:
             return None
         for e in reversed(self.log[i + 1:]):
             if e.kind == "answer":
-                return Answer(
-                    choices=tuple(str(c) for c in e.data.get("choices") or ()), text=str(e.data.get("text") or ""),
-                    question=self.log[i].text, at=e.at, by=e.by,
-                )
+                choices, text = e.answer_parts()
+                return Answer(choices=choices, text=text, question=self.log[i].text, at=e.at, by=e.by)
         return None
 
     @classmethod

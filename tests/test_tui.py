@@ -1770,3 +1770,59 @@ async def test_answer_key_can_be_rebound(store):
         await pilot.press("ctrl+r")
         await settle(pilot)
         assert isinstance(app.screen, AnswerScreen)
+
+
+async def test_answer_window_refuses_a_question_replaced_while_open(store):
+    a = seed(store, ("x", "todo", 3))[0]
+    ops.ask(store, a, "First?", ["same", "other"])
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        await pilot.press("r")
+        await settle(pilot)
+        ops.ask(store, a, "Second?", ["same", "other"])
+        await pilot.press("1")
+        await settle(pilot)
+    item = store.load().get(a)
+    assert item.open_question().text == "Second?" and item.latest_answer() is None
+
+
+async def test_answer_window_goes_to_free_text_when_the_options_are_gone(store):
+    a = seed(store, ("x", "todo", 3))[0]
+    ops.ask(store, a, "Which?", ["p", "q"])
+    with store.transaction() as board:
+        board.get(a).log[-1].data = {}
+    app = TriageApp(store)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        await pilot.press("r")
+        await settle(pilot)
+        assert app.screen.focused is app.screen.query_one("#answer-input")
+        await pilot.press(*typed("mine"), "enter")
+        await settle(pilot)
+    assert store.load().get(a).latest_answer().text == "mine"
+
+
+async def test_undoing_an_answer_warns_the_agent_may_have_read_it(store, monkeypatch):
+    a = seed(store, ("x", "todo", 3))[0]
+    ops.ask(store, a, "Which?", ["p", "q"])
+    app = TriageApp(store)
+    said = []
+    real_say = app.say
+    monkeypatch.setattr(app, "say", lambda text, **kw: (said.append(text), real_say(text, **kw))[1])
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        await pilot.press("r")
+        await settle(pilot)
+        await pilot.press("1")
+        await settle(pilot)
+        await pilot.press("u")
+        await settle(pilot)
+    assert store.load().get(a).open_question() is not None
+    assert "may already have read" in said[-1]

@@ -96,7 +96,7 @@ Front ends should catch `(TriageError, ValueError)`.
 | `bounce(store, id, reason="", *, actor="user")` | review/done → todo, logs "bounced: reason"; user only (agents get PermissionDenied) |
 | `note(store, id, text, *, actor)` | allowed unless an agent targets a `user`-tagged item |
 | `ask(store, id, question, options, multi=False, *, actor="agent")` | logs a `question`; 2-6 distinct non-empty options; asking again replaces an open question; allowed unless an agent targets a `user`-tagged item |
-| `answer(store, id, choices, text="", *, actor="user")` | logs an `answer` to the open question (`InvalidOperation` when there is none); choices must be options (one unless `multi`), free text may replace or add to them; agents get PermissionDenied; undoable (`revert` removes the reply and reopens the question) |
+| `answer(store, id, choices, text="", *, actor="user", question=None)` | logs an `answer` to the open question (`InvalidOperation` when there is none, or when `question`, the one the user saw, was replaced); choices must be options (one unless `multi`), free text may replace or add to them; agents get PermissionDenied; undoable (`revert` removes the reply and reopens the question) |
 | `reorder(store, id, delta, *, actor)` | moves within the status column; adopts the neighbour's priority when crossing a band; meta has the delta |
 | `archive(store, id, *, actor)` | → archived (soft delete) |
 | `purge(store, id, *, actor)` | permanent delete |
